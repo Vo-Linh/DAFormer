@@ -62,6 +62,7 @@ class BaseDecodeHead(BaseModule, metaclass=ABCMeta):
                      use_sigmoid=False,
                      loss_weight=1.0),
                  decoder_params=None,
+                 vib_params=None,
                  ignore_index=255,
                  sampler=None,
                  align_corners=False,

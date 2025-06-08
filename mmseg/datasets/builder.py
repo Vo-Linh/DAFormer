@@ -61,19 +61,25 @@ def _concat_dataset(cfg, default_args=None):
         datasets.append(build_dataset(data_cfg, default_args))
 
     return ConcatDataset(datasets)
-
-
 def build_dataset(cfg, default_args=None):
     """Build datasets."""
     from .dataset_wrappers import ConcatDataset, RepeatDataset
     from mmseg.datasets import UDADataset
-    if cfg['type'] == 'UDADataset':
+    from mmseg.datasets.smda_dataset import SMDADataset
+    
+    if isinstance(cfg, (list, tuple)):
+        dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
+    elif cfg['type'] == 'UDADataset':
         dataset = UDADataset(
             source=build_dataset(cfg['source'], default_args),
             target=build_dataset(cfg['target'], default_args),
             cfg=cfg)
-    elif isinstance(cfg, (list, tuple)):
-        dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
+    elif cfg['type'] == 'SMDADataset':
+        dataset = SMDADataset(
+            source=build_dataset(cfg['source'], default_args),
+            target=build_dataset(cfg['target'], default_args),
+            cfg=cfg,
+        )
     elif cfg['type'] == 'RepeatDataset':
         dataset = RepeatDataset(
             build_dataset(cfg['dataset'], default_args), cfg['times'])

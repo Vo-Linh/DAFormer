@@ -71,6 +71,8 @@ class DACS(UDADecorator):
         self.debug_img_interval = cfg['debug_img_interval']
         self.print_grad_magnitude = cfg['print_grad_magnitude']
         assert self.mix == 'class'
+        self.cmap = cfg['cmap']
+
 
         self.debug_fdist_mask = None
         self.debug_gt_rescale = None
@@ -339,19 +341,19 @@ class DACS(UDADecorator):
                     axs[0][1],
                     gt_semantic_seg[j],
                     'Source Seg GT',
-                    cmap='cityscapes')
+                    cmap=self.cmap)
                 subplotimg(
                     axs[1][1],
                     pseudo_label[j],
                     'Target Seg (Pseudo) GT',
-                    cmap='cityscapes')
+                    cmap=self.cmap)
                 subplotimg(axs[0][2], vis_mixed_img[j], 'Mixed Image')
                 subplotimg(
                     axs[1][2], mix_masks[j][0], 'Domain Mask', cmap='gray')
                 # subplotimg(axs[0][3], pred_u_s[j], "Seg Pred",
                 #            cmap="cityscapes")
                 subplotimg(
-                    axs[1][3], mixed_lbl[j], 'Seg Targ', cmap='cityscapes')
+                    axs[1][3], mixed_lbl[j], 'Seg Targ', cmap=self.cmap)
                 subplotimg(
                     axs[0][3], pseudo_weight[j], 'Pseudo W.', vmin=0, vmax=1)
                 if self.debug_fdist_mask is not None:
@@ -365,7 +367,7 @@ class DACS(UDADecorator):
                         axs[1][4],
                         self.debug_gt_rescale[j],
                         'Scaled GT',
-                        cmap='cityscapes')
+                        cmap=self.cmap)
                 for ax in axs.flat:
                     ax.axis('off')
                 plt.savefig(

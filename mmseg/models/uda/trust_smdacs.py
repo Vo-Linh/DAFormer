@@ -1,0 +1,381 @@
+import math
+import os
+import random
+import time
+from copy import deepcopy
+
+import mmcv
+import numpy as np
+import torch
+import torch.nn.functional as F
+from matplotlib import pyplot as plt
+from timm.models.layers import DropPath
+from torch.nn.modules.dropout import _DropoutNd
+
+from mmseg.core import add_prefix
+from mmseg.models import UDA
+from mmseg.models.utils.dacs_transforms import (denorm, get_class_masks,
+                                                get_mean_std, strong_transform)
+from mmseg.models.utils.visualization import subplotimg
+
+from .smdacs import SMDACS
+
+
+@UDA.register_module()
+class TrustAwareSMDACS(SMDACS):
+    def __init__(self, balance_weight, **cfg):
+        super(TrustAwareSMDACS, self).__init__(**cfg)
+
+        self.trust_score = None
+        self.balance_weight = balance_weight
+        self.title_trst_weight = None
+
+    def compute_trust_weight(self, pseudo_label: torch.Tensor, accuracies: torch.Tensor) -> torch.Tensor:
+        """
+        Compute per-pixel accuracy weights (trust) from pseudo labels and class-wise accuracy.
+
+        Args:
+            pseudo_label (torch.Tensor): Tensor of shape (B, H, W) containing predicted class indices.
+            accuracies (torch.Tensor): Tensor of shape (B, 1, C) containing per-class accuracy scores.
+
+        Returns:
+            torch.Tensor: Tensor of shape (B, H, W) containing per-pixel trust values.
+        """
+        B, H, W = pseudo_label.shape
+        num_classes = accuracies.size(-1)
+        if torch.any(pseudo_label >= self.num_classes) or torch.any(pseudo_label < 0):
+            raise ValueError(
+                f"Invalid pseudo_label values found: min={pseudo_label.min()}, max={pseudo_label.max()}, num_classes={self.num_classes}")
+        # Ensure accuracy tensor shape is (B, C, 1, 1) for broadcasting
+        if accuracies.size(0) == 1:
+            # Broadcast to (B, C, 1, 1)
+            accuracy_expanded = accuracies.squeeze(
+                1).repeat(B, 1).unsqueeze(-1).unsqueeze(-1)
+        else:
+            accuracy_expanded = accuracies.squeeze(
+                1).unsqueeze(-1).unsqueeze(-1)
+
+        # One-hot encode pseudo labels and permute to (B, C, H, W)
+        pseudo_onehot = F.one_hot(
+            pseudo_label, num_classes=num_classes).permute(0, 3, 1, 2).float()
+
+        # Multiply one-hot labels with class accuracy and sum over class dimension
+        return (pseudo_onehot * accuracy_expanded).sum(dim=1)  # (B, H, W)
+
+    def compute_accuracy(self, pseudo_label, target_gt_semantic_seg, num_classes):
+        """
+        Compute accuracy between pseudo-labels and ground truth labels.
+
+        Args:
+            pseudo_label (Tensor): Pseudo-labels (B x H x W) or (H x W).
+            target_gt_semantic_seg (Tensor): Ground truth labels (B x 1 x H x W) or (1 x H x W).
+            num_classes (int): Total number of classes.
+
+        Returns:
+            Tensor: Accuracy for each class, with shape (B, 1, C) or (1, 1, C).
+        """
+        # Handle input shape without batch dimension
+        if pseudo_label.dim() == 2:
+            pseudo_label = pseudo_label.unsqueeze(0)  # (1, H, W)
+        if target_gt_semantic_seg.dim() == 3:
+            target_gt_semantic_seg = target_gt_semantic_seg.unsqueeze(
+                0)  # (1, 1, H, W)
+
+        batch_size = pseudo_label.shape[0]
+        device = pseudo_label.device
+        _, _, H, W = target_gt_semantic_seg.shape
+
+        all_class_accuracies = torch.zeros(
+            batch_size, num_classes, device=device)
+
+        for i in range(batch_size):
+            pseudo_flat = pseudo_label[i].view(-1)
+            gt_flat = target_gt_semantic_seg[i].squeeze(0).view(-1)
+
+            for class_id in range(num_classes):
+                pseudo_class_mask = (pseudo_flat == class_id)
+                gt_class_mask = (gt_flat == class_id)
+
+                correct_predictions = torch.sum(
+                    pseudo_class_mask & gt_class_mask)
+                total_gt_pixels = torch.sum(gt_class_mask)
+
+                if total_gt_pixels > 0:
+                    all_class_accuracies[i, class_id] = correct_predictions.float(
+                    ) / total_gt_pixels
+
+        return all_class_accuracies.unsqueeze(1)  # Shape: (B, 1, C)
+
+    def _update_trust_score(self, recompute_trust_score, alpha=0.8):
+        # Initialize or update trust weight
+        if self.trust_score is None:
+            self.trust_score = recompute_trust_score.clone()
+        else:
+            self.trust_score = self.alpha * recompute_trust_score + \
+                (1 - self.alpha) * self.trust_score
+
+    def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
+                      target_img_metas, target_gt_semantic_seg, **kwargs):
+        """Forward function for training.
+
+        Args:
+            img (Tensor): Input images.
+            img_metas (list[dict]): List of image info dict.
+            gt_semantic_seg (Tensor): Semantic segmentation masks for source.
+            target_img (Tensor): Target domain images.
+            target_img_metas (list[dict]): List of target image info dict.
+            target_gt_semantic_seg (Tensor): Target domain segmentation masks.
+
+        Returns:
+            dict[str, Tensor]: a dictionary of loss components
+        """
+        self.title_trst_weight = "Used old trust weight"
+        log_vars = {}
+        batch_size, C, W, H = img.shape
+        device = img.device
+
+        # Initialize/update EMA model
+        if self.local_iter == 0:
+            self._init_ema_weights()
+            self.title_trst_weight = "Inital trust weight"
+            self.trust_score = torch.ones(
+                (1, 1, self.num_classes), device=device)
+        elif self.local_iter > 0:
+            self._update_ema(self.local_iter)
+
+        # Get mean & std for normalization operations
+        means, stds = get_mean_std(img_metas, device)
+
+        # Set up strong augmentation parameters
+        strong_parameters = {
+            'mix': None,
+            'color_jitter': random.uniform(0, 1),
+            'color_jitter_s': self.color_jitter_s,
+            'color_jitter_p': self.color_jitter_p,
+            'blur': random.uniform(0, 1) if self.blur else 0,
+            'mean': means[0].unsqueeze(0),
+            'std': stds[0].unsqueeze(0)
+        }
+
+        # Train on source images
+        clean_losses = self.get_model().forward_train(
+            img, img_metas, gt_semantic_seg, return_feat=True)
+        src_feat = clean_losses.pop('features')
+        clean_loss, clean_log_vars = self._parse_losses(clean_losses)
+        log_vars.update(clean_log_vars)
+        clean_loss.backward(retain_graph=self.enable_fdist)
+
+        # Print gradient magnitude if requested
+        if self.print_grad_magnitude:
+            self._log_grad_magnitude('Seg')
+
+        # ImageNet feature distance calculation
+        if self.enable_fdist:
+            feat_loss, feat_log = self.calc_feat_dist(
+                img, gt_semantic_seg, src_feat)
+            feat_loss.backward()
+            log_vars.update(add_prefix(feat_log, 'src'))
+
+            if self.print_grad_magnitude:
+                self._log_grad_magnitude('Fdist', base_grads=[p.grad.detach().clone() for p in
+                                                              self.get_model().backbone.parameters() if p.grad is not None])
+
+        # Set dropout layers to eval mode for pseudo-label generation
+        self._set_dropout_eval()
+
+        # Generate pseudo-labels
+        ema_logits = self.get_ema_model().encode_decode(target_img, target_img_metas)
+        ema_softmax = torch.softmax(ema_logits.detach(), dim=1)
+        pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
+        del ema_logits, ema_softmax
+        torch.cuda.empty_cache()
+        # Calculate pseudo-label confidence
+        ps_large_p = pseudo_prob.ge(self.pseudo_threshold).long() == 1
+        ps_size = np.size(np.array(pseudo_label.cpu()))
+        pseudo_weight = torch.sum(ps_large_p).item() / ps_size
+        pseudo_weight = pseudo_weight * \
+            torch.ones(pseudo_prob.shape, device=device)
+
+        # Store original pseudo-labels
+        pseudo_label_keep = pseudo_label.clone()
+
+        # Apply ignore regions if specified
+        if self.psweight_ignore_top > 0:
+            pseudo_weight[:, :self.psweight_ignore_top, :] = 0
+        if self.psweight_ignore_bottom > 0:
+            pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
+
+        # Compute accuracy if ground truth is available
+        use_gt = []
+        # Process each item in batch
+        accuracy_tensor_list = []
+        for i in range(batch_size):
+            has_labels = target_img_metas[i].get('with_labels', False)
+            use_gt.append(has_labels)
+
+            # Override pseudo-labels with ground truth when available
+            if has_labels:
+                accuracy_tensor = self.compute_accuracy(
+                    pseudo_label[i],
+                    target_gt_semantic_seg[i],
+                    num_classes=self.num_classes
+                )
+                accuracy_tensor_list.append(accuracy_tensor)
+
+                pseudo_weight[i] = torch.ones_like(
+                    pseudo_weight[i], device=device)
+                pseudo_label[i] = target_gt_semantic_seg[i].squeeze(0)
+                self.debug_gt += 1
+
+        gt_pixel_weight = torch.ones_like(pseudo_weight, device=device)
+
+        if accuracy_tensor_list:
+            self.title_trst_weight = "Update new trust weight"
+            avg_accuracy_tensor = torch.stack(accuracy_tensor_list).mean(dim=0)
+            self._update_trust_score(avg_accuracy_tensor, 0.8)
+
+        trust_weight = self.compute_trust_weight(
+            pseudo_label_keep, self.trust_score)
+        
+
+        pseudo_weight = self.balance_weight*pseudo_weight + \
+            (1 - self.balance_weight)*trust_weight
+
+        # Apply mixing strategy
+        mixed_img, mixed_lbl = [], []
+        mix_masks = get_class_masks(gt_semantic_seg)
+
+        for i in range(batch_size):
+            strong_parameters['mix'] = mix_masks[i]
+
+            # Mix source and target images/labels
+            img_i, lbl_i = strong_transform(
+                strong_parameters,
+                data=torch.stack((img[i], target_img[i])),
+                target=torch.stack((gt_semantic_seg[i][0], pseudo_label[i]))
+            )
+            mixed_img.append(img_i)
+            mixed_lbl.append(lbl_i)
+
+            _, pseudo_weight[i] = strong_transform(
+                strong_parameters,
+                target=torch.stack((gt_pixel_weight[i], pseudo_weight[i])))
+
+        # Concatenate mixed data
+        mixed_img = torch.cat(mixed_img)
+        mixed_lbl = torch.cat(mixed_lbl)
+
+        # Train on mixed images
+        mix_losses = self.get_model().forward_train(
+            mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
+        mix_losses.pop('features')
+        mix_losses = add_prefix(mix_losses, 'mix')
+        mix_loss, mix_log_vars = self._parse_losses(mix_losses)
+        log_vars.update(mix_log_vars)
+        mix_loss.backward()
+
+        # Visualization for debugging
+        if self.local_iter % self.debug_img_interval == 0:
+            self._save_debug_images(
+                img, target_img, mixed_img,
+                gt_semantic_seg, target_gt_semantic_seg, mixed_lbl,
+                pseudo_label, pseudo_label_keep, pseudo_weight, mix_masks, trust_weight,
+                means, stds, batch_size, use_gt
+            )
+
+        self.local_iter += 1
+        return log_vars
+
+    def _set_dropout_eval(self):
+        """Set dropout and DropPath layers to eval mode"""
+        for m in self.get_ema_model().modules():
+            if isinstance(m, (_DropoutNd, DropPath)):
+                m.training = False
+
+    def _log_grad_magnitude(self, name, base_grads=None):
+        """Log the magnitude of gradients"""
+        params = self.get_model().backbone.parameters()
+        grads = [p.grad.detach().clone() for p in params if p.grad is not None]
+
+        if base_grads is not None:
+            grads = [g2 - g1 for g1, g2 in zip(base_grads, grads)]
+
+        grad_mag = sum(g.norm().item() for g in grads) / len(grads)
+        mmcv.print_log(f'{name} Grad.: {grad_mag:.4f}', 'mmseg')
+
+    def _save_debug_images(self, img, target_img, mixed_img, gt_semantic_seg,
+                           target_gt_semantic_seg, mixed_lbl, pseudo_label,
+                           pseudo_label_keep, pseudo_weight, mix_masks, trust_weight,
+                           means, stds, batch_size, use_gt):
+        """Save debug visualization images"""
+        out_dir = os.path.join(self.train_cfg['work_dir'], 'class_mix_debug')
+        os.makedirs(out_dir, exist_ok=True)
+
+        # Denormalize images for visualization
+        vis_img = torch.clamp(denorm(img, means, stds), 0, 1)
+        vis_trg_img = torch.clamp(denorm(target_img, means, stds), 0, 1)
+        vis_mixed_img = torch.clamp(denorm(mixed_img, means, stds), 0, 1)
+
+        if trust_weight is not None:
+            trust_weight_vis = trust_weight.detach().cpu().clamp(0, 1)
+        else:
+            trust_weight_vis = [None] * batch_size
+        for j in range(batch_size):
+            rows, cols = 2, 6
+            _, axs = plt.subplots(
+                rows, cols,
+                figsize=(3 * cols, 3 * rows),
+                gridspec_kw={
+                    'hspace': 0.1, 'wspace': 0, 'top': 0.95,
+                    'bottom': 0, 'right': 1, 'left': 0
+                },
+            )
+
+            # Plot source domain data
+            subplotimg(axs[0][0], vis_img[j], 'Source Image')
+            subplotimg(axs[0][1], gt_semantic_seg[j],
+                       'Source Seg GT', cmap=self.cmap)
+
+            # Plot target domain data
+            subplotimg(axs[1][0], vis_trg_img[j], 'Target Image')
+            subplotimg(axs[1][1], target_gt_semantic_seg[j],
+                       'Target Seg GT', cmap=self.cmap)
+
+            # Plot pseudo-labels
+            if use_gt[j]:
+                subplotimg(axs[0][2], pseudo_label[j],
+                           'Target Seg Pseudo GT', cmap=self.cmap)
+                subplotimg(axs[1][2], pseudo_label_keep[j],
+                           'Target Seg Pseudo Gen', cmap=self.cmap)
+            else:
+                subplotimg(axs[0][2], pseudo_label[j],
+                           'Target Seg Pseudo', cmap=self.cmap)
+
+            # Plot mixed data
+            subplotimg(axs[0][3], vis_mixed_img[j], 'Mixed Image')
+            subplotimg(axs[1][3], mix_masks[j][0], 'Domain Mask', cmap='gray')
+            subplotimg(axs[0][4], mixed_lbl[j],
+                       'Seg Mixed Targ', cmap=self.cmap)
+            subplotimg(axs[1][4], pseudo_weight[j],
+                       'Pseudo W.', vmin=0, vmax=1)
+
+            if trust_weight_vis is not None:
+                subplotimg(axs[1][5], trust_weight_vis[j],
+                           self.title_trst_weight, vmin=0, vmax=1)
+
+            # Plot additional debug info if available
+            if hasattr(self, 'debug_fdist_mask') and self.debug_fdist_mask is not None:
+                subplotimg(axs[0][6], self.debug_fdist_mask[j]
+                           [0], 'FDist Mask', cmap='gray')
+            if hasattr(self, 'debug_gt_rescale') and self.debug_gt_rescale is not None:
+                subplotimg(axs[1][6], self.debug_gt_rescale[j],
+                           'Scaled GT', cmap=self.cmap)
+
+            # Turn off axes for all subplots
+            for ax in axs.flat:
+                ax.axis('off')
+
+            # Save the figure
+            plt.savefig(os.path.join(
+                out_dir, f'{(self.local_iter + 1)}_{j}.png'))
+            plt.close()

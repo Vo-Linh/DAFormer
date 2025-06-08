@@ -11,6 +11,8 @@ from .. import builder
 from ..builder import SEGMENTORS
 from .base import BaseSegmentor
 
+from mmcv.utils import print_log
+from mmseg.utils import get_root_logger
 
 @SEGMENTORS.register_module()
 class EncoderDecoder(BaseSegmentor):
@@ -300,3 +302,81 @@ class EncoderDecoder(BaseSegmentor):
         # unravel batch dim
         seg_pred = list(seg_pred)
         return seg_pred
+
+@SEGMENTORS.register_module()
+class EncoderDecoderForSupervised(EncoderDecoder):
+    """Encoder Decoder segmentors for supervised learning.
+
+    EncoderDecoder typically consists of backbone, decode_head, auxiliary_head.
+    Note that auxiliary_head is only used for deep supervision during training,
+    which could be dumped during inference.
+    """
+
+    def __init__(self,
+                 backbone,
+                 decode_head,
+                 neck=None,
+                 auxiliary_head=None,
+                 train_cfg=None,
+                 test_cfg=None,
+                 pretrained=None,
+                 init_cfg=None):
+        super(EncoderDecoder, self).__init__(init_cfg)
+        if pretrained is not None:
+            assert backbone.get('pretrained') is None, \
+                'both backbone and segmentor set pretrained weight'
+            backbone.pretrained = pretrained
+        self.backbone = builder.build_backbone(backbone)
+        if neck is not None:
+            self.neck = builder.build_neck(neck)
+        self._init_decode_head(decode_head)
+        self._init_auxiliary_head(auxiliary_head)
+
+        self.train_cfg = train_cfg
+        self.test_cfg = test_cfg
+
+        assert self.with_decode_head
+    # @auto_fp16(apply_to=('img', ))
+    def forward_train(self,
+                      img,
+                      img_metas,
+                      gt_semantic_seg,
+                      seg_weight=None,
+                      return_feat=False):
+        """Forward function for training."""
+        x = self.extract_feat(img)
+
+        losses = dict()
+        if return_feat:
+            losses['features'] = x
+
+        loss_decode = self._decode_head_forward_train(
+            x, img_metas, gt_semantic_seg, seg_weight)
+        losses.update(add_prefix(loss_decode, 'decode'))
+
+        if self.with_auxiliary_head:
+            loss_aux = self._auxiliary_head_forward_train(
+                x, img_metas, gt_semantic_seg, seg_weight)
+            losses.update(add_prefix(loss_aux, 'aux'))
+
+        return losses
+
+    def train_step(self, data_batch, optimizer, **kwargs):
+        """The iteration step during training."""
+        # Forward pass
+        losses = self.forward_train(
+            img=data_batch['img'],
+            img_metas=data_batch['img_metas'],
+            gt_semantic_seg=data_batch['gt_semantic_seg'])
+
+        loss, log_vars = self._parse_losses(losses)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        outputs = dict(
+            loss=loss,
+            log_vars=log_vars,
+            num_samples=len(data_batch['img_metas']))
+        return outputs

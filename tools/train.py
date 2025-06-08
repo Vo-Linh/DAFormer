@@ -4,6 +4,9 @@
 # - Snapshot source code
 # - Build UDA model instead of regular one
 
+# Modification 2:
+# - Build UDA or regular model based config
+
 import argparse
 import copy
 import os

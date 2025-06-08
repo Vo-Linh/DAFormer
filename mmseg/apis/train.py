@@ -15,7 +15,7 @@ from mmseg.core import DistEvalHook, EvalHook
 from mmseg.core.ddp_wrapper import DistributedDataParallelWrapper
 from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger
-
+from mmcv.utils import print_log
 
 def set_random_seed(seed, deterministic=False):
     """Set random seed.

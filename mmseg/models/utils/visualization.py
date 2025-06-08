@@ -1,5 +1,5 @@
 # Obtained from: https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0
-
+# Modification: Support for Loveda Visualization
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
@@ -53,7 +53,10 @@ Cityscapes_palette = [
     96, 224, 64, 224, 224, 64, 96, 96, 192, 224, 96, 192, 96, 224, 192, 0, 0, 0
 ]
 
-
+loveda_palette=  [255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 0, 255,
+               159, 129, 183, 0, 255, 0, 255, 195, 128]
+potsdam_palette = [255, 255, 255, 0, 0, 255, 0, 255, 255, 0, 255, 0, 55, 255, 0, 255, 0, 0]
+# potsdam_palette = [255, 255, 255, 0, 0, 255, 0, 255, 255, 0, 255, 0, 55, 255, 0]
 def colorize_mask(mask, palette):
     zero_pad = 256 * 3 - len(palette)
     for i in range(zero_pad):
@@ -102,6 +105,16 @@ def subplotimg(ax,
             if torch.is_tensor(img):
                 img = img.numpy()
             img = colorize_mask(img, palette)
+        elif kwargs.get('cmap','') == 'loveda':
+            kwargs.pop('cmap')
+            if torch.is_tensor(img):
+                img = img.numpy()
+            img = colorize_mask(img, loveda_palette)
+        elif kwargs.get('cmap','') == 'potsdam':
+            kwargs.pop('cmap')
+            if torch.is_tensor(img):
+                img = img.numpy()
+            img = colorize_mask(img, potsdam_palette)
 
     if range_in_title:
         vmin = np.min(img)

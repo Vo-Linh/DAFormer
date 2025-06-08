@@ -123,3 +123,4 @@ configs/tmp_param.json
 configs/generated/
 *.pdf
 *.pgf
+*.png

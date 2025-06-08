@@ -10,6 +10,10 @@ from .dataset_wrappers import ConcatDataset, RepeatDataset
 from .gta import GTADataset
 from .synthia import SynthiaDataset
 from .uda_dataset import UDADataset
+from .loveda import LoveDADataset, SMLoveDADataset
+from .smda_dataset import SMDADataset
+from .isprs import ISPRSDataset, SSISPRSDataset
+from .potsdam import PotsdamDataset, SSPotsdamDataset
 
 __all__ = [
     'CustomDataset',
@@ -25,4 +29,11 @@ __all__ = [
     'UDADataset',
     'ACDCDataset',
     'DarkZurichDataset',
+    'LoveDADataset',
+    'SMLoveDADataset',
+    'SMDADataset',
+    'ISPRSDataset',
+    'SSISPRSDataset',
+    'PotsdamDataset',
+    'SSPotsdamDataset',
 ]

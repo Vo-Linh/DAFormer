@@ -11,6 +11,8 @@ from prettytable import PrettyTable
 
 from mmseg.models import build_segmentor
 
+from mmcv.utils import Config
+
 
 def human_format(num):
     magnitude = 0
@@ -41,22 +43,25 @@ if __name__ == '__main__':
     parser.add_argument(
         '--exp',
         nargs='?',
-        type=int,
+        type=str,
         default=100,
         help='Experiment id as defined in experiment.py',
     )
     args = parser.parse_args()
     get_logger('mmseg', log_level=logging.ERROR)
-    cfgs = generate_experiment_cfgs(args.exp)
-    for cfg in cfgs:
-        with open('configs/tmp_param.json', 'w') as f:
-            json.dump(cfg, f)
-        cfg = Config.fromfile('configs/tmp_param.json')
+    # cfgs = generate_experiment_cfgs(args.exp)
+    cfg = Config.fromfile(f"{args.exp}/{args.exp.split('/')[-1]}.json")
 
-        model = build_segmentor(deepcopy(cfg['model']))
-        # model.init_weights()
-        # count_parameters(model)
-        print(f'Encoder {cfg["name_encoder"]}:')
-        count_parameters(model.backbone)
-        print(f'Decoder {cfg["name_decoder"]}:')
-        count_parameters(model.decode_head)
+    # print(cfg['model'])
+    # for cfg in cfgs:
+    # with open('configs/tmp_param.json', 'w') as f:
+    #     json.dump(cfg, f)
+    # cfg = Config.fromfile('configs/tmp_param.json')
+
+    model = build_segmentor(deepcopy(cfg['model']))
+    # model.init_weights()
+    # count_parameters(model)
+    print(f'Encoder {cfg["name_encoder"]}:')
+    count_parameters(model.backbone)
+    print(f'Decoder {cfg["name_decoder"]}:')
+    count_parameters(model.decode_head)

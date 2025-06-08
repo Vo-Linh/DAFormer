@@ -3,15 +3,15 @@
 
 from .aspp_head import ASPPHead
 from .da_head import DAHead
-from .daformer_head import DAFormerHead
+from .daformer_head import DAFormerHead, DAFormerVIBHead
 from .dlv2_head import DLV2Head
 from .fcn_head import FCNHead
 from .isa_head import ISAHead
 from .psp_head import PSPHead
-from .segformer_head import SegFormerHead
+from .segformer_head import SegFormerHead, SegFormerVIBHead
 from .sep_aspp_head import DepthwiseSeparableASPPHead
 from .uper_head import UPerHead
-
+from .vib_head import FPN_VIB_Head
 __all__ = [
     'FCNHead',
     'PSPHead',
@@ -21,6 +21,9 @@ __all__ = [
     'DAHead',
     'DLV2Head',
     'SegFormerHead',
+    'SegFormerVIBHead',
     'DAFormerHead',
     'ISAHead',
+    'DAFormerVIBHead',
+    'FPN_VIB_Head',
 ]

@@ -19,5 +19,6 @@ uda = dict(
     color_jitter_probability=0.2,
     debug_img_interval=1000,
     print_grad_magnitude=False,
+    cmap = 'loveda',
 )
 use_ddp_wrapper = True

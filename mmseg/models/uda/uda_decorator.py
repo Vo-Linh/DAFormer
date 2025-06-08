@@ -71,8 +71,8 @@ class UDADecorator(BaseSegmentor):
             dict[str, Tensor]: a dictionary of loss components
         """
         losses = self.get_model().forward_train(
-            img, img_metas, gt_semantic_seg, return_feat=return_feat)
-        return losses
+           img, img_metas, gt_semantic_seg, return_feat=return_feat)
+        return losses 
 
     def inference(self, img, img_meta, rescale):
         """Inference with slide/whole style.

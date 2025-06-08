@@ -9,6 +9,7 @@ _base_ = ['daformer_conv1_mitb5.py']
 
 norm_cfg = dict(type='BN', requires_grad=True)
 model = dict(
+    # neck=dict(type='SegFormerAdapter', scales=[8]),
     decode_head=dict(
         decoder_params=dict(
             fusion_cfg=dict(

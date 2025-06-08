@@ -14,7 +14,11 @@ from .aspp_head import ASPPModule
 from .decode_head import BaseDecodeHead
 from .segformer_head import MLP
 from .sep_aspp_head import DepthwiseSeparableASPPModule
+from .vib_head import VIB
+from ..builder import build_loss
 
+from mmcv.utils import print_log
+from mmseg.utils import get_root_logger
 
 class ASPPWrapper(nn.Module):
 
@@ -78,7 +82,6 @@ class ASPPWrapper(nn.Module):
             aspp_outs.append(self.context_layer(x))
         aspp_outs.extend(self.aspp_modules(x))
         aspp_outs = torch.cat(aspp_outs, dim=1)
-
         output = self.bottleneck(aspp_outs)
         return output
 
@@ -116,6 +119,9 @@ def build_layer(in_channels, out_channels, type, **kwargs):
     elif type == 'isa':
         return ISALayer(
             in_channels=in_channels, channels=out_channels, **kwargs)
+    elif type == 'vib':
+        return VIB(
+            in_channel=in_channels,)
     else:
         raise NotImplementedError(type)
 
@@ -181,4 +187,107 @@ class DAFormerHead(BaseDecodeHead):
         x = self.fuse_layer(torch.cat(list(_c.values()), dim=1))
         x = self.cls_seg(x)
 
+        return x
+
+@HEADS.register_module()
+class DAFormerVIBHead(DAFormerHead):
+    def __init__(self, **kwargs):
+        super(DAFormerVIBHead, self).__init__(**kwargs)
+        self.vib = None
+        
+        if kwargs['vib_params'] is not None:
+            vib_params = kwargs['vib_params']
+            # print_log(
+            #     f'VIB params: {vib_params}',
+            #     logger=get_root_logger())
+            self.vib = build_layer(
+                in_channels=vib_params['in_channels'],
+                out_channels=vib_params['in_channels'],
+                type='vib',)
+            self.vib_loss = build_loss(vib_params['loss_vib'])
+    def forward(self, inputs):
+        """Forward function."""
+        # parse vib inputs
+        # print_log(
+        #     f'inputs: {inputs[0].shape}, {inputs[1].shape}, {inputs[2].shape}',
+        #     logger=get_root_logger())
+        if len(inputs) == 3:
+            x, _, _ = inputs
+        else:
+            x = inputs
+        
+        n, _, h, w = x[-1].shape
+        # for f in x:
+        #     mmcv.print_log(f'{f.shape}', 'mmseg')
+
+        os_size = x[0].size()[2:]
+        _c = {}
+        for i in self.in_index:
+            # mmcv.print_log(f'{i}: {x[i].shape}', 'mmseg')
+            _c[i] = self.embed_layers[str(i)](x[i])
+            if _c[i].dim() == 3:
+                _c[i] = _c[i].permute(0, 2, 1).contiguous()\
+                    .reshape(n, -1, x[i].shape[2], x[i].shape[3])
+            # mmcv.print_log(f'_c{i}: {_c[i].shape}', 'mmseg')
+            if _c[i].size()[2:] != os_size:
+                # mmcv.print_log(f'resize {i}', 'mmseg')
+                _c[i] = resize(
+                    _c[i],
+                    size=os_size,
+                    mode='bilinear',
+                    align_corners=self.align_corners)
+
+        x = self.fuse_layer(torch.cat(list(_c.values()), dim=1))
+        return x
+    def forward_train(self,
+                      inputs,
+                      img_metas,
+                      gt_semantic_seg,
+                      train_cfg,
+                      seg_weight=None):
+        """Forward function for training.
+        Args:
+            inputs (list[Tensor]): List of multi-level img features.
+            img_metas (list[dict]): List of image meta info.
+            gt_semantic_seg (Tensor): Ground truth semantic
+                segmentation map. Shape (N, 1, H, W).
+            train_cfg (dict): Config dict for training.
+            seg_weight (Tensor): The weight of the segmentation loss.
+                Defaults to None.
+        """
+        x = self.forward(inputs)
+            
+        losses = dict()
+
+        if self.vib is not None:
+            mu, std, x = self.vib(x)
+            # print_log(
+            #     f'VIB mu: {mu.shape}, std: {std.shape}, x: {x.shape}',
+            #     logger=get_root_logger())
+
+            vib_loss = self.vib_loss(mu, std)
+            losses['vib_out_loss']= vib_loss
+
+        x = self.cls_seg(x)
+
+        loss = self.losses(x, gt_semantic_seg, seg_weight)
+        losses.update(loss)
+    
+        # print_log(
+        #     f'losses: {losses}',
+        #     logger=get_root_logger())
+        return losses
+    
+    def forward_test(self, inputs, img_metas, test_cfg):
+        """Forward function for testing.
+        Args:
+            inputs (list[Tensor]): List of multi-level img features.
+            img_metas (list[dict]): List of image meta info.
+            test_cfg (dict): Config dict for testing.
+        """
+        x = self.forward(inputs)
+        if self.vib is not None:
+            mu, std, x = self.vib(x)
+
+        x = self.cls_seg(x)
         return x

@@ -4,7 +4,8 @@ import os.path as osp
 
 import mmcv
 import numpy as np
-
+from mmcv.utils import print_log
+from mmseg.utils import get_root_logger
 from ..builder import PIPELINES
 
 
@@ -64,9 +65,11 @@ class LoadImageFromFile(object):
             img_bytes, flag=self.color_type, backend=self.imdecode_backend)
         if self.to_float32:
             img = img.astype(np.float32)
-
         results['filename'] = filename
         results['ori_filename'] = results['img_info']['filename']
+        results['with_labels']  = results['img_info'].get('with_labels', False)
+
+        # print_log(results, logger=get_root_logger())
         results['img'] = img
         results['img_shape'] = img.shape
         results['ori_shape'] = img.shape
@@ -124,12 +127,15 @@ class LoadAnnotations(object):
 
         if self.file_client is None:
             self.file_client = mmcv.FileClient(**self.file_client_args)
+        # print_log(results, logger=get_root_logger())
 
         if results.get('seg_prefix', None) is not None:
             filename = osp.join(results['seg_prefix'],
                                 results['ann_info']['seg_map'])
+            # results['use_gt'] = int(results['ann_info']['seg_map'].split('.')[0]) == 404            
         else:
-            filename = results['ann_info']['seg_map']
+            filename = results['ann_info']['seg_map']      
+        # results['with_labels']=results['img_info']['ann'].get('with_labels',False)
         img_bytes = self.file_client.get(filename)
         gt_semantic_seg = mmcv.imfrombytes(
             img_bytes, flag='unchanged',
@@ -146,6 +152,9 @@ class LoadAnnotations(object):
             gt_semantic_seg[gt_semantic_seg == 254] = 255
         results['gt_semantic_seg'] = gt_semantic_seg
         results['seg_fields'].append('gt_semantic_seg')
+        # print_log(results, logger=get_root_logger())
+        results['with_labels']  = results['ann_info'].get('with_labels', False)
+
         return results
 
     def __repr__(self):

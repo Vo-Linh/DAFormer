@@ -105,6 +105,59 @@ def single_gpu_test(model,
             prog_bar.update()
     return results
 
+def single_gpu_infer_features(model,
+                    data_loader,
+                    out_dir=None,
+                    ):
+    """Infering with single GPU.
+
+    Args:
+        model (nn.Module): Model to be tested.
+        data_loader (utils.data.Dataloader): Pytorch data loader.
+        show (bool): Whether show results during inference. Default: False.
+        out_dir (str, optional): If specified, the results will be dumped into
+            the directory to save output results.
+        efficient_test (bool): Whether save the results as local numpy files to
+            save CPU memory during evaluation. Default: False.
+        opacity(float): Opacity of painted segmentation map.
+            Default 0.5.
+            Must be in (0, 1] range.
+    Returns:
+        list: The features.
+    """
+
+    model.eval()
+    results = []
+    dataset = data_loader.dataset
+    prog_bar = mmcv.ProgressBar(len(dataset))
+    gts_all = []
+    
+    
+    for i, data in enumerate(data_loader):
+        print(data)
+        gts_all.append(data['gt_semantic_seg'][0])
+        with torch.no_grad():
+            # result = model(return_loss=False, **data)
+
+        
+            img_tensor = data['img'][0]
+            img_metas = data['img_metas'][0].data[0]
+            imgs = tensor2imgs(img_tensor, **img_metas[0]['img_norm_cfg'])
+            assert len(imgs) == len(img_metas)
+
+            for img, img_meta in zip(imgs, img_metas):
+                # h, w, _ = img_meta['img_shape']
+                # img_show = img[:h, :w, :]
+
+                # ori_h, ori_w = img_meta['ori_shape'][:-1]
+                # img_show = mmcv.imresize(img_show, (ori_w, ori_h))
+
+                results.append(model.encode_decode(img, img_meta))
+                
+        prog_bar.update()
+    return results, gts_all
+
+
 
 def multi_gpu_test(model,
                    data_loader,

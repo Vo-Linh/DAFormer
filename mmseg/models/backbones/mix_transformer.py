@@ -17,6 +17,7 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 from mmseg.models.builder import BACKBONES
 from mmseg.utils import get_root_logger
+from mmcv.utils import print_log
 
 
 class Mlp(nn.Module):

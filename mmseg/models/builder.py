@@ -1,11 +1,16 @@
 # Obtained from: https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0
 # Modifications: Support UDA models
 
+# Modifications 2: Support for SMDA Models
+
 import warnings
 
 from mmcv.cnn import MODELS as MMCV_MODELS
 from mmcv.cnn.bricks.registry import ATTENTION as MMCV_ATTENTION
 from mmcv.utils import Registry
+
+from mmcv.utils import print_log
+from mmseg.utils import get_root_logger
 
 MODELS = Registry('models', parent=MMCV_MODELS)
 ATTENTION = Registry('attention', parent=MMCV_ATTENTION)
@@ -16,6 +21,7 @@ HEADS = MODELS
 LOSSES = MODELS
 SEGMENTORS = MODELS
 UDA = MODELS
+SMDA = MODELS
 
 
 def build_backbone(cfg):
@@ -53,7 +59,13 @@ def build_train_model(cfg, train_cfg=None, test_cfg=None):
         cfg.uda['max_iters'] = cfg.runner.max_iters
         return UDA.build(
             cfg.uda, default_args=dict(train_cfg=train_cfg, test_cfg=test_cfg))
+    elif 'smda' in cfg:
+        cfg.smda['model'] = cfg.model
+        cfg.smda['max_iters'] = cfg.runner.max_iters
+        return SMDA.build(
+            cfg.smda, default_args=dict(train_cfg=train_cfg, test_cfg=test_cfg))
     else:
+        print_log('Build normal segmentor', get_root_logger())
         return SEGMENTORS.build(
             cfg.model,
             default_args=dict(train_cfg=train_cfg, test_cfg=test_cfg))

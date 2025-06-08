@@ -1,4 +1,4 @@
 from .base import BaseSegmentor
-from .encoder_decoder import EncoderDecoder
+from .encoder_decoder import EncoderDecoder, EncoderDecoderForSupervised
 
-__all__ = ['BaseSegmentor', 'EncoderDecoder']
+__all__ = ['BaseSegmentor', 'EncoderDecoder', 'EncoderDecoderForSupervised']

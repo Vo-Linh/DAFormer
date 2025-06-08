@@ -87,3 +87,34 @@ class SegFormerHead(BaseDecodeHead):
         x = self.linear_pred(x)
 
         return x
+@HEADS.register_module()
+class SegFormerVIBHead(SegFormerHead):
+    def __init__(self, **kwargs):
+        super(SegFormerVIBHead, self).__init__(**kwargs)
+    def forward(self, inputs):
+        x, _,_ = inputs
+        n, _, h, w = x[-1].shape
+        # for f in x:
+        #     print(f.shape)
+
+        _c = {}
+        for i in self.in_index:
+            # mmcv.print_log(f'{i}: {x[i].shape}, {self.linear_c[str(i)]}')
+            _c[i] = self.linear_c[str(i)](x[i]).permute(0, 2, 1).contiguous()
+            _c[i] = _c[i].reshape(n, -1, x[i].shape[2], x[i].shape[3])
+            if i != 0:
+                _c[i] = resize(
+                    _c[i],
+                    size=x[0].size()[2:],
+                    mode='bilinear',
+                    align_corners=False)
+
+        _c = self.linear_fuse(torch.cat(list(_c.values()), dim=1))
+
+        if self.dropout is not None:
+            x = self.dropout(_c)
+        else:
+            x = _c
+        x = self.linear_pred(x)
+
+        return x
