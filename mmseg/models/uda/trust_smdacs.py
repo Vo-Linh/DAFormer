@@ -29,6 +29,14 @@ class TrustAwareSMDACS(SMDACS):
         self.trust_score = None
         self.balance_weight = balance_weight
         self.title_trst_weight = None
+        
+        # Initialize tracking variables
+        self.tracking_metrics = {
+            'class_accuracies': [],
+            'trust_weight_stats': [],
+            'pseudo_weight_stats': [],
+            'iterations': []
+        }
 
     def compute_trust_weight(self, pseudo_label: torch.Tensor, accuracies: torch.Tensor) -> torch.Tensor:
         """
@@ -111,8 +119,91 @@ class TrustAwareSMDACS(SMDACS):
         if self.trust_score is None:
             self.trust_score = recompute_trust_score.clone()
         else:
-            self.trust_score = self.alpha * recompute_trust_score + \
-                (1 - self.alpha) * self.trust_score
+            mask = (recompute_trust_score != 0).int()
+            self.trust_score = (1 - self.alpha) * mask * recompute_trust_score + \
+                self.alpha * self.trust_score
+
+    def _track_metrics(self, avg_accuracy_tensor, trust_weight, pseudo_weight):
+        """Track metrics during training"""
+        # Track class accuracies
+        if avg_accuracy_tensor is not None:
+            class_acc = avg_accuracy_tensor.squeeze().cpu().numpy()
+            self.tracking_metrics['class_accuracies'].append({
+                'iteration': self.local_iter,
+                'accuracies': class_acc.tolist(),
+                'mean_accuracy': float(class_acc.mean()),
+                'std_accuracy': float(class_acc.std())
+            })
+        
+        # Track trust weight statistics
+        if trust_weight is not None:
+            trust_stats = {
+                'iteration': self.local_iter,
+                'mean': float(trust_weight.mean().cpu()),
+                'std': float(trust_weight.std().cpu()),
+                'min': float(trust_weight.min().cpu()),
+                'max': float(trust_weight.max().cpu()),
+                'median': float(trust_weight.median().cpu())
+            }
+            self.tracking_metrics['trust_weight_stats'].append(trust_stats)
+        
+        # Track pseudo weight statistics
+        if pseudo_weight is not None:
+            pseudo_stats = {
+                'iteration': self.local_iter,
+                'mean': float(pseudo_weight.mean().cpu()),
+                'std': float(pseudo_weight.std().cpu()),
+                'min': float(pseudo_weight.min().cpu()),
+                'max': float(pseudo_weight.max().cpu()),
+                'median': float(pseudo_weight.median().cpu())
+            }
+            self.tracking_metrics['pseudo_weight_stats'].append(pseudo_stats)
+        
+        self.tracking_metrics['iterations'].append(self.local_iter)
+
+    def _log_tracking_metrics(self, log_vars):
+        """Add tracking metrics to log variables"""
+        if len(self.tracking_metrics['class_accuracies']) > 0:
+            latest_acc = self.tracking_metrics['class_accuracies'][-1]
+            log_vars['mean_class_accuracy'] = latest_acc['mean_accuracy']
+            log_vars['std_class_accuracy'] = latest_acc['std_accuracy']
+        
+        if len(self.tracking_metrics['trust_weight_stats']) > 0:
+            latest_trust = self.tracking_metrics['trust_weight_stats'][-1]
+            log_vars['trust_weight_mean'] = latest_trust['mean']
+            log_vars['trust_weight_std'] = latest_trust['std']
+        
+        if len(self.tracking_metrics['pseudo_weight_stats']) > 0:
+            latest_pseudo = self.tracking_metrics['pseudo_weight_stats'][-1]
+            log_vars['pseudo_weight_mean'] = latest_pseudo['mean']
+            log_vars['pseudo_weight_std'] = latest_pseudo['std']
+
+    def _save_tracking_data(self):
+        """Save tracking data to file"""
+        if hasattr(self, 'train_cfg') and 'work_dir' in self.train_cfg:
+            tracking_dir = os.path.join(self.train_cfg['work_dir'], 'tracking')
+            os.makedirs(tracking_dir, exist_ok=True)
+            
+            # Save as numpy files for easy loading
+            np.save(os.path.join(tracking_dir, 'tracking_metrics.npy'), 
+                   self.tracking_metrics, allow_pickle=True)
+            
+            # Also save as text for human readability
+            with open(os.path.join(tracking_dir, 'tracking_log.txt'), 'a') as f:
+                f.write(f"Iteration {self.local_iter}:\n")
+                if len(self.tracking_metrics['class_accuracies']) > 0:
+                    latest_acc = self.tracking_metrics['class_accuracies'][-1]
+                    f.write(f"  Class Accuracies: {latest_acc['accuracies']}\n")
+                    f.write(f"  Mean Accuracy: {latest_acc['mean_accuracy']:.4f}\n")
+                    trust_score_list = self.trust_score.squeeze().cpu().tolist()
+                    f.write(f"S_tr: {trust_score_list}\n")
+                if len(self.tracking_metrics['trust_weight_stats']) > 0:
+                    latest_trust = self.tracking_metrics['trust_weight_stats'][-1]
+                    f.write(f"  Trust Weight - Mean: {latest_trust['mean']:.4f}, Std: {latest_trust['std']:.4f}\n")
+                if len(self.tracking_metrics['pseudo_weight_stats']) > 0:
+                    latest_pseudo = self.tracking_metrics['pseudo_weight_stats'][-1]
+                    f.write(f"  Pseudo Weight - Mean: {latest_pseudo['mean']:.4f}, Std: {latest_pseudo['std']:.4f}\n")
+                f.write("\n")
 
     def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
                       target_img_metas, target_gt_semantic_seg, **kwargs):
@@ -209,6 +300,8 @@ class TrustAwareSMDACS(SMDACS):
         use_gt = []
         # Process each item in batch
         accuracy_tensor_list = []
+        avg_accuracy_tensor = None  # Initialize for tracking
+        
         for i in range(batch_size):
             has_labels = target_img_metas[i].get('with_labels', False)
             use_gt.append(has_labels)
@@ -232,14 +325,19 @@ class TrustAwareSMDACS(SMDACS):
         if accuracy_tensor_list:
             self.title_trst_weight = "Update new trust weight"
             avg_accuracy_tensor = torch.stack(accuracy_tensor_list).mean(dim=0)
-            self._update_trust_score(avg_accuracy_tensor, 0.8)
+            self._update_trust_score(avg_accuracy_tensor, 0.99)
+        else:
+            # Create zero accuracy tensor when no ground truth is available
+            avg_accuracy_tensor = torch.zeros((1, 1, self.num_classes), device=device)
 
         trust_weight = self.compute_trust_weight(
             pseudo_label_keep, self.trust_score)
         
-
         pseudo_weight = self.balance_weight*pseudo_weight + \
             (1 - self.balance_weight)*trust_weight
+
+        # Track metrics here - after all weights are computed
+        self._track_metrics(avg_accuracy_tensor, trust_weight, pseudo_weight)
 
         # Apply mixing strategy
         mixed_img, mixed_lbl = [], []
@@ -273,6 +371,13 @@ class TrustAwareSMDACS(SMDACS):
         mix_loss, mix_log_vars = self._parse_losses(mix_losses)
         log_vars.update(mix_log_vars)
         mix_loss.backward()
+
+        # Add tracking metrics to log variables
+        self._log_tracking_metrics(log_vars)
+
+        # Save tracking data periodically
+        if accuracy_tensor_list:
+            self._save_tracking_data()
 
         # Visualization for debugging
         if self.local_iter % self.debug_img_interval == 0:
