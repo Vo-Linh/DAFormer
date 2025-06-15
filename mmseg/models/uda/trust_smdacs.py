@@ -333,8 +333,7 @@ class TrustAwareSMDACS(SMDACS):
         trust_weight = self.compute_trust_weight(
             pseudo_label_keep, self.trust_score)
         
-        pseudo_weight = self.balance_weight*pseudo_weight + \
-            (1 - self.balance_weight)*trust_weight
+        pseudo_weight = pseudo_weight*trust_weight
 
         # Track metrics here - after all weights are computed
         self._track_metrics(avg_accuracy_tensor, trust_weight, pseudo_weight)
