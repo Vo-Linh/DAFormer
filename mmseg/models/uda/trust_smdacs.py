@@ -23,21 +23,26 @@ from .smdacs import SMDACS
 
 @UDA.register_module()
 class TrustAwareSMDACS(SMDACS):
-    def __init__(self, balance_weight, **cfg):
+    def __init__(self, trust_update_interval=100, **cfg):
         super(TrustAwareSMDACS, self).__init__(**cfg)
 
         self.trust_score = None
-        self.balance_weight = balance_weight
         self.title_trst_weight = None
+        self.trust_update_interval = trust_update_interval  # Update trust score every X iterations
+        
+        # Accumulation variables for periodic trust score update
+        self.accumulated_accuracy = None  # Sum of accuracies for each class
+        self.accumulated_mask = None      # Sum of masks (count) for each class
+        self.last_trust_update_iter = 0   # Track when trust was last updated
         
         # Initialize tracking variables
         self.tracking_metrics = {
             'class_accuracies': [],
             'trust_weight_stats': [],
             'pseudo_weight_stats': [],
-            'iterations': []
+            'iterations': [],
         }
-
+        
     def compute_trust_weight(self, pseudo_label: torch.Tensor, accuracies: torch.Tensor) -> torch.Tensor:
         """
         Compute per-pixel accuracy weights (trust) from pseudo labels and class-wise accuracy.
@@ -114,14 +119,73 @@ class TrustAwareSMDACS(SMDACS):
 
         return all_class_accuracies.unsqueeze(1)  # Shape: (B, 1, C)
 
-    def _update_trust_score(self, recompute_trust_score, alpha=0.8):
-        # Initialize or update trust weight
+    def _accumulate_accuracy_and_mask(self, accuracy_tensor):
+        """
+        Accumulate accuracy and mask for periodic trust score update.
+        
+        Args:
+            accuracy_tensor (torch.Tensor): Tensor of shape (B, 1, C) containing per-class accuracy scores.
+        """
+        device = accuracy_tensor.device
+        num_classes = accuracy_tensor.size(-1)
+        
+        # Initialize accumulation tensors if not exist
+        if self.accumulated_accuracy is None:
+            self.accumulated_accuracy = torch.zeros((1, 1, num_classes), device=device)
+            self.accumulated_mask = torch.zeros((1, 1, num_classes), device=device)
+        
+        # Create mask for classes that have non-zero accuracy (indicating they were present in GT)
+        mask = (accuracy_tensor > 0).float()
+        
+        # Accumulate accuracy and mask
+        self.accumulated_accuracy += accuracy_tensor.sum(dim=0)  # Sum across batch
+        self.accumulated_mask += mask.sum(dim=0)  # Count across batch
+        
+    def _update_trust_score(self, alpha=0.8):
+        """
+        Update trust score using accumulated accuracy and mask data.
+        
+        Args:
+            alpha (float): EMA decay factor for trust score update.
+        """
+        if self.accumulated_accuracy is None or self.accumulated_mask is None:
+            return
+        
+        # Compute average accuracy for each class
+        # Avoid division by zero
+        mask_nonzero = self.accumulated_mask > 0
+        avg_accuracy = torch.zeros_like(self.accumulated_accuracy)
+        avg_accuracy[mask_nonzero] = (self.accumulated_accuracy[mask_nonzero] / 
+                                     self.accumulated_mask[mask_nonzero])
+        
+        # Initialize or update trust score
         if self.trust_score is None:
-            self.trust_score = recompute_trust_score.clone()
+            self.trust_score = avg_accuracy.clone()
+            self.title_trst_weight = "Initial trust weight from accumulated data"
         else:
-            mask = (recompute_trust_score != 0).int()
-            self.trust_score = (1 - self.alpha) * mask * recompute_trust_score + \
-                self.alpha * self.trust_score
+            # Only update classes that have data (mask > 0)
+            update_mask = (self.accumulated_mask > 0).float()
+            self.trust_score = ((1 - alpha) * update_mask * avg_accuracy + 
+                               alpha * self.trust_score)
+            self.title_trst_weight = "Updated trust weight from accumulated data"
+        
+        # Reset accumulation variables
+        self.accumulated_accuracy.zero_()
+        self.accumulated_mask.zero_()
+        self.last_trust_update_iter = self.local_iter
+        
+        # Log the update
+        trust_score_list = self.trust_score.squeeze().cpu().tolist()
+        mmcv.print_log(f'Trust score updated at iteration {self.local_iter}: {trust_score_list}', 'mmseg')
+
+    def _should_update_trust_score(self):
+        """
+        Check if trust score should be updated based on iteration interval.
+        
+        Returns:
+            bool: True if trust score should be updated.
+        """
+        return (self.local_iter - self.last_trust_update_iter) >= self.trust_update_interval
 
     def _track_metrics(self, avg_accuracy_tensor, trust_weight, pseudo_weight):
         """Track metrics during training"""
@@ -228,7 +292,7 @@ class TrustAwareSMDACS(SMDACS):
         # Initialize/update EMA model
         if self.local_iter == 0:
             self._init_ema_weights()
-            self.title_trst_weight = "Inital trust weight"
+            self.title_trst_weight = "Initial trust weight"
             self.trust_score = torch.ones(
                 (1, 1, self.num_classes), device=device)
         elif self.local_iter > 0:
@@ -280,6 +344,7 @@ class TrustAwareSMDACS(SMDACS):
         pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
         del ema_logits, ema_softmax
         torch.cuda.empty_cache()
+        
         # Calculate pseudo-label confidence
         ps_large_p = pseudo_prob.ge(self.pseudo_threshold).long() == 1
         ps_size = np.size(np.array(pseudo_label.cpu()))
@@ -296,11 +361,10 @@ class TrustAwareSMDACS(SMDACS):
         if self.psweight_ignore_bottom > 0:
             pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
 
-        # Compute accuracy if ground truth is available
+        # Compute accuracy if ground truth is available and accumulate
         use_gt = []
-        # Process each item in batch
         accuracy_tensor_list = []
-        avg_accuracy_tensor = None  # Initialize for tracking
+        avg_accuracy_tensor = None
         
         for i in range(batch_size):
             has_labels = target_img_metas[i].get('with_labels', False)
@@ -322,18 +386,26 @@ class TrustAwareSMDACS(SMDACS):
 
         gt_pixel_weight = torch.ones_like(pseudo_weight, device=device)
 
+        # Handle accuracy accumulation and trust score update
         if accuracy_tensor_list:
-            self.title_trst_weight = "Update new trust weight"
+            # Stack and compute average accuracy for current batch
             avg_accuracy_tensor = torch.stack(accuracy_tensor_list).mean(dim=0)
-            self._update_trust_score(avg_accuracy_tensor, 0.99)
+            
+            # Accumulate accuracy and mask for periodic update
+            self._accumulate_accuracy_and_mask(torch.stack(accuracy_tensor_list))
+            
+            # Check if it's time to update trust score
+            if self._should_update_trust_score():
+                self._update_trust_score(alpha=0.99)
         else:
             # Create zero accuracy tensor when no ground truth is available
             avg_accuracy_tensor = torch.zeros((1, 1, self.num_classes), device=device)
 
+        # Compute trust weight using current trust score
         trust_weight = self.compute_trust_weight(
             pseudo_label_keep, self.trust_score)
         
-        pseudo_weight = pseudo_weight*trust_weight
+        pseudo_weight = pseudo_weight * trust_weight
 
         # Track metrics here - after all weights are computed
         self._track_metrics(avg_accuracy_tensor, trust_weight, pseudo_weight)
