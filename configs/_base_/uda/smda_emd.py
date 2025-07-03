@@ -22,7 +22,9 @@ uda = dict(
     sm_prob=0.1,
     print_grad_magnitude=False,
     cmap='loveda',
-    balance_weight=0.8,
+    trust_update_interval=100,
+    # coeffient=0.5  # Coefficient for trust weight adjustment
+    # trust_update_interval=500,
     
 )
 use_ddp_wrapper = True

@@ -25,7 +25,7 @@ from .smdacs import SMDACS
 class TrustAwareSMDACS(SMDACS):
     def __init__(self, trust_update_interval=100, **cfg):
         super(TrustAwareSMDACS, self).__init__(**cfg)
-
+        # mode_debug= Fasle
         self.trust_score = None
         self.title_trst_weight = None
         self.trust_update_interval = trust_update_interval  # Update trust score every X iterations
@@ -34,6 +34,8 @@ class TrustAwareSMDACS(SMDACS):
         self.accumulated_accuracy = None  # Sum of accuracies for each class
         self.accumulated_mask = None      # Sum of masks (count) for each class
         self.last_trust_update_iter = 0   # Track when trust was last updated
+        
+        # self.coefficent = coeffient # Coefficient for trust weight adjustment
         
         # Initialize tracking variables
         self.tracking_metrics = {
@@ -257,16 +259,19 @@ class TrustAwareSMDACS(SMDACS):
                 f.write(f"Iteration {self.local_iter}:\n")
                 if len(self.tracking_metrics['class_accuracies']) > 0:
                     latest_acc = self.tracking_metrics['class_accuracies'][-1]
+                    f.write(f"  Accumulate accuracy: {self.accumulated_accuracy} \n")
+                    f.write(f"  Accumulate mask: {self.accumulated_mask}\n")
                     f.write(f"  Class Accuracies: {latest_acc['accuracies']}\n")
                     f.write(f"  Mean Accuracy: {latest_acc['mean_accuracy']:.4f}\n")
                     trust_score_list = self.trust_score.squeeze().cpu().tolist()
-                    f.write(f"S_tr: {trust_score_list}\n")
+                    f.write(f"  S_tr: {trust_score_list}\n")
                 if len(self.tracking_metrics['trust_weight_stats']) > 0:
                     latest_trust = self.tracking_metrics['trust_weight_stats'][-1]
                     f.write(f"  Trust Weight - Mean: {latest_trust['mean']:.4f}, Std: {latest_trust['std']:.4f}\n")
                 if len(self.tracking_metrics['pseudo_weight_stats']) > 0:
                     latest_pseudo = self.tracking_metrics['pseudo_weight_stats'][-1]
                     f.write(f"  Pseudo Weight - Mean: {latest_pseudo['mean']:.4f}, Std: {latest_pseudo['std']:.4f}\n")
+                
                 f.write("\n")
 
     def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
@@ -405,7 +410,9 @@ class TrustAwareSMDACS(SMDACS):
         trust_weight = self.compute_trust_weight(
             pseudo_label_keep, self.trust_score)
         
-        pseudo_weight = pseudo_weight * trust_weight
+        # pseudo_weight = pseudo_weight * (trust_weight ** self.coefficent) 
+        pseudo_label = pseudo_label * trust_weight
+
 
         # Track metrics here - after all weights are computed
         self._track_metrics(avg_accuracy_tensor, trust_weight, pseudo_weight)
@@ -413,7 +420,9 @@ class TrustAwareSMDACS(SMDACS):
         # Apply mixing strategy
         mixed_img, mixed_lbl = [], []
         mix_masks = get_class_masks(gt_semantic_seg)
-
+        if self.local_iter % self.debug_img_interval == 0:
+            before_update_pseudo_weight = pseudo_weight.clone()
+            
         for i in range(batch_size):
             strong_parameters['mix'] = mix_masks[i]
 
@@ -456,7 +465,7 @@ class TrustAwareSMDACS(SMDACS):
                 img, target_img, mixed_img,
                 gt_semantic_seg, target_gt_semantic_seg, mixed_lbl,
                 pseudo_label, pseudo_label_keep, pseudo_weight, mix_masks, trust_weight,
-                means, stds, batch_size, use_gt
+                means, stds, batch_size, use_gt, before_update_pseudo_weight
             )
 
         self.local_iter += 1
@@ -482,7 +491,7 @@ class TrustAwareSMDACS(SMDACS):
     def _save_debug_images(self, img, target_img, mixed_img, gt_semantic_seg,
                            target_gt_semantic_seg, mixed_lbl, pseudo_label,
                            pseudo_label_keep, pseudo_weight, mix_masks, trust_weight,
-                           means, stds, batch_size, use_gt):
+                           means, stds, batch_size, use_gt, before_update_pseudo_weight):
         """Save debug visualization images"""
         out_dir = os.path.join(self.train_cfg['work_dir'], 'class_mix_debug')
         os.makedirs(out_dir, exist_ok=True)
@@ -533,8 +542,10 @@ class TrustAwareSMDACS(SMDACS):
             subplotimg(axs[0][4], mixed_lbl[j],
                        'Seg Mixed Targ', cmap=self.cmap)
             subplotimg(axs[1][4], pseudo_weight[j],
-                       'Pseudo W.', vmin=0, vmax=1)
-
+                       'Final Pseudo W.', vmin=0, vmax=1)
+            
+            subplotimg(axs[0][5], before_update_pseudo_weight[j],
+                           "DAFormer Pseudo W.", vmin=0, vmax=1)
             if trust_weight_vis is not None:
                 subplotimg(axs[1][5], trust_weight_vis[j],
                            self.title_trst_weight, vmin=0, vmax=1)
