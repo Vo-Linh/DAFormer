@@ -30,10 +30,10 @@ smda = dict(
     pseudo_weight_ignore_bottom=120)
 
 train_tartget_dataset = dict(
-    split="Train0_5Rural.txt",
+    split="Train0_1Rural.txt",
 )
 data = dict(
-    samples_per_gpu=6,
+    samples_per_gpu=4,
     workers_per_gpu=8,
     train=dict(
         # Rare Class Sampling
@@ -58,9 +58,9 @@ evaluation = dict(interval=1000, metric='mIoU', save_best='mIoU')
 # Ignore specified label index in loss calculation
 
 # Meta Information for Result Analysis
-name = 'SMDA_EMD_Exp_2_urban50rural_2rural_pseudo_lr06_tsw0.8_baw_05May_10'
+name = 'SMDA_EMD_Exp_2_urban50rural_2rural_pseudo_lr06_tsw0.8_baw_05_mask_psiterupdateJun_18'
 
-exp = 'SMDA_TS'
+exp = 'SMDA_TS_IterUpdate'
 name_dataset = 'SMurban2rural'
 name_architecture = 'daformer_sepaspp_mitb5'
 name_encoder = 'mitb5'

@@ -1,0 +1,3 @@
+smda = dict(
+    type='ASSUDA',
+)

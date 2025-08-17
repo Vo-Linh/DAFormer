@@ -211,6 +211,7 @@ class DAFormerVIBHead(DAFormerHead):
         # print_log(
         #     f'inputs: {inputs[0].shape}, {inputs[1].shape}, {inputs[2].shape}',
         #     logger=get_root_logger())
+        # parse VIB inputs
         if len(inputs) == 3:
             x, _, _ = inputs
         else:
@@ -260,7 +261,7 @@ class DAFormerVIBHead(DAFormerHead):
         losses = dict()
 
         if self.vib is not None:
-            mu, std, x = self.vib(x)
+            x, mu, std = self.vib(x)
             # print_log(
             #     f'VIB mu: {mu.shape}, std: {std.shape}, x: {x.shape}',
             #     logger=get_root_logger())
@@ -287,7 +288,7 @@ class DAFormerVIBHead(DAFormerHead):
         """
         x = self.forward(inputs)
         if self.vib is not None:
-            mu, std, x = self.vib(x)
+            x, _, _ = self.vib(x)
 
         x = self.cls_seg(x)
         return x

@@ -14,6 +14,7 @@ from .loveda import LoveDADataset, SMLoveDADataset
 from .smda_dataset import SMDADataset
 from .isprs import ISPRSDataset, SSISPRSDataset
 from .potsdam import PotsdamDataset, SSPotsdamDataset
+from .ssda_dataset import SSDADataset
 
 __all__ = [
     'CustomDataset',
@@ -36,4 +37,5 @@ __all__ = [
     'SSISPRSDataset',
     'PotsdamDataset',
     'SSPotsdamDataset',
+    'SSDADataset',
 ]

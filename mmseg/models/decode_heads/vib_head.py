@@ -44,7 +44,7 @@ class VIB(nn.Module):
         eps = torch.randn_like(std)
         z = mu + std*eps
 
-        return mu, std, z
+        return z, mu, std
 
 class FPN_VIB(nn.Module):
     """
@@ -95,7 +95,7 @@ class FPN_VIB(nn.Module):
             mu_list.append(mu)
             std_list.append(std)
 
-        return mu_list, std_list, vib_list
+        return vib_list, mu_list, std_list
 
 @HEADS.register_module()
 class FPN_VIB_Head(BaseDecodeHead):

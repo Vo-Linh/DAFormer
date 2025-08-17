@@ -129,7 +129,7 @@ class LoadAnnotations(object):
             self.file_client = mmcv.FileClient(**self.file_client_args)
         # print_log(results, logger=get_root_logger())
 
-        if results.get('seg_prefix', None) is not None:
+        if results.get('seg_prefix', None) is not None and len(results.get('seg_prefix', None)) > 0:
             filename = osp.join(results['seg_prefix'],
                                 results['ann_info']['seg_map'])
             # results['use_gt'] = int(results['ann_info']['seg_map'].split('.')[0]) == 404            

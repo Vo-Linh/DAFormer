@@ -9,7 +9,7 @@ import torch
 from mmcv.engine import collect_results_cpu, collect_results_gpu
 from mmcv.image import tensor2imgs
 from mmcv.runner import get_dist_info
-
+# from mmcv.parallel import DataContainer
 
 def np2tmp(array, temp_file_name=None, tmpdir=None):
     """Save ndarray to local numpy file.
@@ -62,6 +62,18 @@ def single_gpu_test(model,
     if efficient_test:
         mmcv.mkdir_or_exist('.efficient_test')
     for i, data in enumerate(data_loader):
+        # img_metas = data['img_metas']
+        # if isinstance(img_metas, DataContainer):
+        #     img_metas = img_metas.data[0]
+        # else:
+        #     img_metas = [
+        #         im.data[0] if isinstance(im, DataContainer) else im
+        #         for im in img_metas
+        #     ]
+        # data['img_metas'] = img_metas
+        # # mmcv.print_log(data['img_metas'][0], 'mmseg')
+
+
         with torch.no_grad():
             result = model(return_loss=False, **data)
 

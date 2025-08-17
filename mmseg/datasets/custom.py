@@ -209,7 +209,6 @@ class CustomDataset(Dataset):
 
         img_info = self.img_infos[idx]
         ann_info = self.get_ann_info(idx)
-        # print_log(ann_info, logger=get_root_logger())
 
         results = dict(img_info=img_info, ann_info=ann_info)
         self.pre_pipeline(results)

@@ -61,7 +61,13 @@ def build_train_model(cfg, train_cfg=None, test_cfg=None):
             cfg.uda, default_args=dict(train_cfg=train_cfg, test_cfg=test_cfg))
     elif 'smda' in cfg:
         cfg.smda['model'] = cfg.model
+        cfg.smda['discriminator_g'] = cfg.discriminator_g
+        cfg.smda['discriminator_s'] = cfg.discriminator_s
+        cfg.smda['optimizer'] = cfg.optimizer
+        cfg.smda['gan_loss'] = cfg.gan_loss
         cfg.smda['max_iters'] = cfg.runner.max_iters
+        cfg.smda['target_dataset'] = cfg.data.train.target_labeled.deepcopy()
+        cfg.smda['target_dataset']['pipeline'] = cfg.data.train.target_labeled.pipeline
         return SMDA.build(
             cfg.smda, default_args=dict(train_cfg=train_cfg, test_cfg=test_cfg))
     else:

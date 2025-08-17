@@ -9,8 +9,9 @@ import mmcv
 import numpy as np
 import torch
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.runner import build_optimizer, build_runner
+from mmcv.runner import build_runner
 
+from mmseg.core.optimizer.multi_optimizer import build_optimizer
 from mmseg.core import DistEvalHook, EvalHook
 from mmseg.core.ddp_wrapper import DistributedDataParallelWrapper
 from mmseg.datasets import build_dataloader, build_dataset

@@ -89,7 +89,6 @@ class SMDACS(UDADecorator):
         self.color_jitter_p = cfg['color_jitter_probability']
         self.debug_img_interval = cfg['debug_img_interval']
         self.sm_prob = cfg['sm_prob']
-        self.debug_gt=0
         self.debug_gt_interval = cfg['debug_gt_interval']
         self.print_grad_magnitude = cfg['print_grad_magnitude']
         self.cmap = cfg['cmap']
@@ -361,7 +360,6 @@ class SMDACS(UDADecorator):
             if target_img_metas[i].get('with_labels', False) :
                 pseudo_weight[i] = 1.0 * torch.ones((pseudo_weight[i].shape), device=dev)
                 pseudo_label[i] = target_gt_semantic_seg[i]
-                self.debug_gt +=1
         # mmcv.print_log(use_gt, logger=get_root_logger())
 
         gt_pixel_weight = torch.ones((pseudo_weight.shape), device=dev)

@@ -6,7 +6,7 @@
 
 # dataset settings
 dataset_type = 'LoveDADataset'
-DATA_ROOT = '/home/Hung_Data/HungData/mmseg_data/Datasets'
+data_root = '/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/loveDA_rural/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 crop_size = (512,512) # follow base line of DAFormer
@@ -53,17 +53,15 @@ test_pipeline = [
         ])
 ]
 
-# Train0_1Rural.txt  Train0_2Rural.txt  Train0_5Rural.txt  TrainRural.txt
+
 train_tartget_dataset = dict(
     type='SMLoveDADataset',
-    data_root=f'{DATA_ROOT}/LoveDA/loveDA/Train/Rural',
+    data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/Val/Urban',
     img_dir='images_png',
     ann_dir='masks_png',
-    split="Train0_1Rural.txt",
-    # dummy=True,
+    split="/home/Hung_Data/HungData/Thien/DAFormer/configs/splits/TrainUrban_5samples.txt",
     pipeline=target_train_pipeline,
 )
-
 
 data = dict(
     samples_per_gpu=4,
@@ -72,7 +70,7 @@ data = dict(
         type='SMDADataset',
         source=dict(
             type='LoveDADataset',
-            data_root=f'{DATA_ROOT}/LoveDA/loveDA/loveDA_urban/',
+            data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/loveDA_rural/',
             img_dir='img_dir/train',
             ann_dir='ann_dir/train',
             pipeline=source_train_pipeline),
@@ -80,13 +78,13 @@ data = dict(
     ),
     val=dict(
         type='LoveDADataset',
-        data_root=f'{DATA_ROOT}/LoveDA/loveDA/Val/Rural',
+        data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/Train/Urban',
             img_dir='images_png',
             ann_dir='masks_png',
         pipeline=test_pipeline),
     test=dict(
         type='LoveDADataset',
-        data_root=f'{DATA_ROOT}/LoveDA/loveDA/Test/Rural',
+        data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/Test/Urban',
         img_dir='images_png',
         ann_dir='masks_png',
         pipeline=test_pipeline))

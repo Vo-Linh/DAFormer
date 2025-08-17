@@ -11,17 +11,20 @@ model = dict(
     pretrained='/home/Hung_Data/HungData/HaiDang/PiPa/pretrained/mit_b5.pth',
     backbone=dict(type='mit_b5', style='pytorch'),
     neck=dict(
-        type='FPN_VIB_Neck',
-        in_channels=[64, 128, 320, 512],),
+        type='FPN',
+        in_channels=[64, 128, 320, 512],
+        out_channels=128,
+        out_channel_=[64, 128, 320, 512],
+        num_outs=4),
     auxiliary_head=dict(
         type='FPN_VIB_Head',
         in_channels=[64, 128, 320, 512],
         in_index=[0, 1, 2, 3],
-        channels=128,
+        channels=256,
         num_classes=7,
         norm_cfg=norm_cfg,
         loss_decode=dict(
-            type='KLLoss')),  
+            type='KLLoss', loss_weight=0.1,)),  
     decode_head=dict(
         type='DAFormerVIBHead',
         in_channels=[64, 128, 320, 512],

@@ -5,7 +5,7 @@ from ..builder import LOSSES
 
 def kl_loss(mu: torch.Tensor,
              std: torch.Tensor,
-             loss_weight: float = 0.1,
+             loss_weight: float = 0.05,
              reduction: str =None) -> torch.Tensor:
     """
     Computes the Kullback-Leibler (KL) divergence loss between a given Gaussian distribution
@@ -69,7 +69,7 @@ class KLLoss(nn.Module):
         >>> std = torch.tensor([[1.0, 0.5], [0.8, 2.0]])
         >>> loss = kl_loss_module(mu, std)
     """   
-    def __init__(self, loss_weight: float = 0.1, reduction: str ='mean') -> None:
+    def __init__(self, loss_weight: float = 0.05, reduction: str ='mean') -> None:
         super().__init__()
         self.reduction = reduction
         self.loss_weight = loss_weight

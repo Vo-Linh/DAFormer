@@ -3,9 +3,10 @@ _base_ = [
     '../_base_/default_runtime.py',
     # DAFormer Network Architecture
     '../_base_/models/daformer_sepaspp_vib_mitb5.py',
-    '../_base_/datasets/loveda2dalat_512x512.py',
+    # GTA->Cityscapes Data Loading
+    '../_base_/datasets/smda_R2U_5percent_512x512.py',
     # Basic UDA Self-Training
-    '../_base_/uda/smda_base.py', # smda_emd.py
+    '../_base_/uda/smda_emd.py',
     # AdamW Optimizer
     '../_base_/schedules/adamw.py',
     # Linear Learning Rate Warmup with Subsequent Linear Decay
@@ -14,23 +15,19 @@ _base_ = [
 # Random Seed
 seed = 111
 # Modifications to Basic UDA
-smda = dict(
-    # Increased Alpha
-    alpha=0.999,
-    # Thing-Class Feature Distance
-    imnet_feature_dist_lambda=0.0,
-    imnet_feature_dist_classes=[1, 2, 3, 4, 5, 6, 7],
-    imnet_feature_dist_scale_min_ratio=0.75,
-    # Pseudo-Label Crop
-    pseudo_weight_ignore_top=0,
-    pseudo_weight_ignore_bottom=0)
+
 data = dict(
     train=dict(
         # Rare Class Sampling
-        # rare_class_sampling=dict(
-        #     min_pixels=3000, class_temp=0, min_crop_ratio=0.5))
-)) 
-#
+        rare_class_sampling=dict(
+            min_pixels=3000, class_temp=0.05, min_crop_ratio=0.5))) 
+uda = dict(
+    # Pseudo Labeling Configuration
+    pseudo_threshold=0.95,
+    # Coefficient for Trust Weight Adjustment
+    coefficient=0.5,
+    trust_update_interval=100,
+    )
 # Optimizer Hyperparameters
 optimizer_config = None
 optimizer = dict(
@@ -44,13 +41,13 @@ n_gpus = 1
 runner = dict(type='IterBasedRunner', max_iters=40000)
 # Logging Configuration
 log_interval = 2000
-checkpoint_config = dict(by_epoch=False, interval=log_interval*5, max_keep_ckpts=2)
+checkpoint_config = dict(by_epoch=False, interval=log_interval*10, max_keep_ckpts=10)
 evaluation = dict(interval=log_interval, metric='mIoU')
 # Meta Information for Result Analysis
-name = 'DAFormer_LoveDA2DALat_SepASPP_VIBout_MITB5_SMDA'
-exp = 'KLTN'
+name = '0_5_trustweight-0_95_psedo-R2U_5percent-vib-smda-emd-daformer_sepaspp-t_0.05_512x512_40k'
+exp = 'EMD_EXP-Phase2'
 name_dataset = 'rural2urban'
-name_architecture = 'daformer_sepaspp_vib_mitb5'
+name_architecture = 'daformer_sepaspp_mitb5'
 name_encoder = 'mitb5'
 name_decoder = 'daformer_sepaspp'
 name_uda = ''

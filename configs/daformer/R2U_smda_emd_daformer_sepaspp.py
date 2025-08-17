@@ -4,9 +4,9 @@ _base_ = [
     # DAFormer Network Architecture
     '../_base_/models/daformer_sepaspp_mitb5.py',
     # GTA->Cityscapes Data Loading
-    '../_base_/datasets/smda_R2U_10percent_512x512.py',
+    '../_base_/datasets/smda_R2U_5percent_512x512.py',
     # Basic UDA Self-Training
-    '../_base_/uda/smda_base.py',
+    '../_base_/uda/smda_emd.py',
     # AdamW Optimizer
     '../_base_/schedules/adamw.py',
     # Linear Learning Rate Warmup with Subsequent Linear Decay
@@ -16,15 +16,14 @@ _base_ = [
 seed = 111
 # Modifications to Basic UDA
 uda = dict(
-    # Increased Alpha
+    # Pseudo Labeling Configuration
+    pseudo_threshold=0.968,
+    # Coefficient for Trust Weight Adjustment
+    coefficient=0.75,
+    trust_update_interval=100,
+    # increased Alpha for Pseudo Labeling
     alpha=0.999,
-    # Thing-Class Feature Distance
-    imnet_feature_dist_lambda=0.00,
-    imnet_feature_dist_classes=[1, 2, 3, 4, 5, 6, 7],
-    imnet_feature_dist_scale_min_ratio=0.75,
-    # Pseudo-Label Crop
-    pseudo_weight_ignore_top=0,
-    pseudo_weight_ignore_bottom=0)
+    )
 data = dict(
     train=dict(
         # Rare Class Sampling
@@ -47,8 +46,8 @@ log_interval = 2000
 checkpoint_config = dict(by_epoch=False, interval=log_interval*10, max_keep_ckpts=10)
 evaluation = dict(interval=log_interval, metric='mIoU')
 # Meta Information for Result Analysis
-name = 'R2U_10percent_smda_daformer_sepaspp_fdist0.005_t_0.05_512x512_40k'
-exp = 'KLTN'
+name = 'emd_t-075_threshold-0-968_alpha-0.999_R2U_5percent_smda_daformer'
+exp = 'Paper-t-confident'
 name_dataset = 'rural2urban'
 name_architecture = 'daformer_sepaspp_mitb5'
 name_encoder = 'mitb5'

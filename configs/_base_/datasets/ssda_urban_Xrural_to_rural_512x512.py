@@ -1,16 +1,10 @@
-# Obtained from: https://github.com/lhoyer/HRDA
-# ---------------------------------------------------------------
-# Copyright (c) 2022 ETH Zurich, Lukas Hoyer. All rights reserved.
-# Licensed under the Apache License, Version 2.0
-# ---------------------------------------------------------------
 
-# dataset settings
 dataset_type = 'LoveDADataset'
-DATA_ROOT = '/home/Hung_Data/HungData/mmseg_data/Datasets'
+data_root = '/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/loveDA_rural/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
-crop_size = (512,512) # follow base line of DAFormer
-loveda_scale=(1024,1024)
+crop_size = (512, 512)  # follow base line of DAFormer
+loveda_scale = (1024, 1024)
 source_train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations', reduce_zero_label=True),
@@ -23,9 +17,8 @@ source_train_pipeline = [
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_semantic_seg']),
 ]
-target_train_pipeline = [
+target_unlabel_train_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='LoadAnnotations', reduce_zero_label=True),
     dict(type='Resize', img_scale=loveda_scale),
     dict(type='RandomCrop', crop_size=crop_size),
     dict(type='RandomFlip', prob=0.5),
@@ -33,8 +26,20 @@ target_train_pipeline = [
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size=crop_size, pad_val=0, seg_pad_val=255),
     dict(type='DefaultFormatBundle'),
+    dict(type='Collect', keys=['img']),
+]
+target_label_train_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations', reduce_zero_label=True),
+    dict(type='Resize', img_scale=loveda_scale),
+    dict(type='RandomCrop', crop_size=crop_size),
+    dict(type='RandomFlip', prob=0.5),
+    dict(type='Normalize', **img_norm_cfg),
+    dict(type='Pad', size=crop_size, pad_val=0, seg_pad_val=255),
+    dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_semantic_seg',]),
 ]
+
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
@@ -52,41 +57,52 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
-
-# Train0_1Rural.txt  Train0_2Rural.txt  Train0_5Rural.txt  TrainRural.txt
-train_tartget_dataset = dict(
-    type='SMLoveDADataset',
-    data_root=f'{DATA_ROOT}/LoveDA/loveDA/Train/Rural',
-    img_dir='images_png',
-    ann_dir='masks_png',
-    split="Train0_1Rural.txt",
-    # dummy=True,
-    pipeline=target_train_pipeline,
+URBAN_DIR = '/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/loveDA_urban/'
+RURAL_DIR = '/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/loveDA_rural/'
+SPLIT_FILE = "/home/Hung_Data/HungData/Thien/DAFormer/configs/splits/ValUrban_5percent.txt"
+train_source_dataset = dict(
+    type='LoveDADataset',
+    data_root=RURAL_DIR,
+    img_dir='img_dir/train',
+    ann_dir='ann_dir/train',
+    pipeline=source_train_pipeline
 )
 
+train_tartget_unlabel_dataset = dict(
+    type='SMLoveDADataset',
+    data_root=URBAN_DIR,
+    img_dir='img_dir/val',
+    ann_dir='ann_dir/val',
+    pipeline=target_unlabel_train_pipeline,
+)
+
+train_tartget_label_dataset = dict(
+    type='SMLoveDADataset',
+    data_root=URBAN_DIR,
+    img_dir='img_dir/val',
+    ann_dir='ann_dir/val',
+    split=SPLIT_FILE,
+    pipeline=target_label_train_pipeline,
+)
 
 data = dict(
-    samples_per_gpu=4,
-    workers_per_gpu=8,
+    samples_per_gpu=2,
+    workers_per_gpu=4,
     train=dict(
-        type='SMDADataset',
-        source=dict(
-            type='LoveDADataset',
-            data_root=f'{DATA_ROOT}/LoveDA/loveDA/loveDA_urban/',
-            img_dir='img_dir/train',
-            ann_dir='ann_dir/train',
-            pipeline=source_train_pipeline),
-        target=train_tartget_dataset,
+        type='SSDADataset',
+        source=train_source_dataset,
+        target_unlabeled=train_tartget_unlabel_dataset,
+        target_labeled=train_tartget_label_dataset,
     ),
     val=dict(
         type='LoveDADataset',
-        data_root=f'{DATA_ROOT}/LoveDA/loveDA/Val/Rural',
-            img_dir='images_png',
-            ann_dir='masks_png',
+        data_root=URBAN_DIR,
+        img_dir='img_dir/train',
+        ann_dir='ann_dir/train',
         pipeline=test_pipeline),
     test=dict(
         type='LoveDADataset',
-        data_root=f'{DATA_ROOT}/LoveDA/loveDA/Test/Rural',
-        img_dir='images_png',
-        ann_dir='masks_png',
+        data_root=URBAN_DIR,
+        img_dir='img_dir/train',
+        ann_dir='ann_dir/train',
         pipeline=test_pipeline))

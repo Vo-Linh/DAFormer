@@ -45,7 +45,7 @@ class VIB(nn.Module):
         eps = torch.randn_like(std)
         z = mu + std*eps
 
-        return mu, std, z
+        return z, mu, std
 
 class FPN_VIB(nn.Module):
     """
@@ -91,12 +91,12 @@ class FPN_VIB(nn.Module):
         std_list = []
 
         for i in range(len(self.fpn_vib)):
-            mu, std, z = self.fpn_vib[i](mul_feature[i])
+            z, mu, std= self.fpn_vib[i](mul_feature[i])
             vib_list.append(z)
             mu_list.append(mu)
             std_list.append(std)
 
-        return mu_list, std_list, vib_list
+        return vib_list, mu_list, std_list
 
 @NECKS.register_module()
 class FPN_VIB_Neck(nn.Module):
@@ -115,6 +115,6 @@ class FPN_VIB_Neck(nn.Module):
         Returns:
             Tuple[torch.Tensor]: Tuple of output segmentation map and KL loss.
         """
-        mu_list, std_list, vib_list = self.fpn_vib(mul_feature)
+        vib_list, mu_list, std_list = self.fpn_vib(mul_feature)
         return vib_list, mu_list, std_list
 
