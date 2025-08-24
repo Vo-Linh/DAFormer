@@ -1,3 +1,5 @@
+
+
 # Obtained from: https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0
 # Modifications: Modification of config and checkpoint to support legacy models
 
@@ -45,6 +47,50 @@ def update_legacy_cfg(cfg):
         cfg.model.decode_head.vib_params = None  
     return cfg
 
+import torch
+import re
+
+def convert_checkpoint(old_ckpt_path):
+    ckpt = torch.load(old_ckpt_path, map_location="cpu")
+    state_dict = ckpt.get("state_dict", ckpt)
+
+    new_state_dict = {}
+
+    for k, v in state_dict.items():
+        new_k = k
+
+        # ---- Patch Embeddings ----
+        if "patch_embed1" in k:
+            new_k = k.replace("patch_embed1", "patch_embed.0")
+        elif "patch_embed2" in k:
+            new_k = k.replace("patch_embed2", "patch_embed.1")
+        elif "patch_embed3" in k:
+            new_k = k.replace("patch_embed3", "patch_embed.2")
+        elif "patch_embed4" in k:
+            new_k = k.replace("patch_embed4", "patch_embed.3")
+
+        # ---- Block renaming ----
+        # old: block1.0.norm1 -> new: layers.0.blocks.0.norm1
+        match = re.match(r"model\.backbone\.block(\d+)\.(\d+)\.(.*)", k)
+        if match:
+            stage, block, suffix = match.groups()
+            stage_idx = int(stage) - 1   # block1 -> layers.0
+            new_k = f"model.backbone.layers.{stage_idx}.blocks.{block}.{suffix}"
+
+        # ---- Norm at end of stage ----
+        match_norm = re.match(r"model\.backbone\.norm(\d+)\.(.*)", k)
+        if match_norm:
+            stage, suffix = match_norm.groups()
+            stage_idx = int(stage) - 1
+            new_k = f"model.backbone.layers.{stage_idx}.norm.{suffix}"
+
+        new_state_dict[new_k] = v
+
+    # Save new checkpoint
+    ckpt["state_dict"] = new_state_dict
+    return ckpt
+
+
 def single_gpu_infer_features(model, dataloader, args=None):
     feats_all = []
     gts_all = []
@@ -75,87 +121,81 @@ def single_gpu_infer_features(model, dataloader, args=None):
         prog_bar.update()
     return feats_all, gts_all
 
-
-def extract_and_tsne_visualize(all_feats, all_labels, palette, class_names, out_path=None):
-
+def extract_and_tsne_visualize(all_feats, all_labels, palette, class_names, out_path=None, seed=42, max_samples=300):
+    # Merge all batches
     all_feats = np.concatenate(all_feats, axis=0)
     all_labels = np.concatenate(all_labels, axis=0)
     print(f"Total feature points: {all_feats.shape[0]}, Total labels: {all_labels.shape[0]}")
-    
 
     sampled_feats = []
     sampled_labels = []
-    
+    np.random.seed(seed)
+
+    # Sample features by class
     for cls_id in np.unique(all_labels):
         if cls_id >= len(class_names):
             print(f"Warning: Class ID {cls_id} exceeds class names length {len(class_names)}")
             continue
+        elif cls_id == 0:  # skip background
+            print(f"Skipping class ID {cls_id} (background)")
+            continue
+
         cls_mask = (all_labels == cls_id)
         indices = np.where(cls_mask)[0]
-        if len(indices) > 10000:
-            sampled_idx = np.random.choice(indices, size=7500, replace=False)
+
+        if len(indices) > max_samples:
+            sampled_idx = np.random.choice(indices, size=max_samples, replace=False)
         else:
             sampled_idx = indices
-        sampled_feats.append(all_feats[sampled_idx])
-        sampled_labels.append(np.full_like(sampled_idx, cls_id))
 
+        sampled_feats.append(all_feats[sampled_idx])
+        sampled_labels.append(np.full(sampled_idx.shape, cls_id))
+
+    # Combine sampled features
     feats = np.concatenate(sampled_feats, axis=0)
     labels = np.concatenate(sampled_labels, axis=0)
 
-    print("Running TSNE on {} feature points...".format(feats.shape[0]))
+    # Run t-SNE
+    print(f"Running t-SNE on {feats.shape[0]} feature points...")
     time_start = time.time()
-    tsne = TSNE(n_jobs=30, n_iter=500, perplexity=30, random_state=42)
+    tsne = TSNE(n_jobs=30, n_iter=500, perplexity=30, random_state=seed)  # lower perplexity
     embedded = tsne.fit_transform(feats)
     print(f"t-SNE completed in {time.time() - time_start:.2f} seconds")
 
+    indices = np.arange(len(embedded))
+    np.random.shuffle(indices)
+    
+    embedded = embedded[indices]
+    labels = labels[indices]
     # Visualization
-    palette[0] = [0, 0, 0]  # Ensure background color is black
-    print(f"Palette: {palette}")
+    palette[0] = [0, 0, 0]  # background black
     palette = np.array(palette)
-    print(f"Labels corresponding to classes: {np.unique(labels)}")
-    print(f"Class names: {class_names}")
-    plt.figure(figsize=(20, 20))
-    # pro_bar = mmcv.ProgressBar(len(class_names))
-    batch_size = 3000
-    num_points = len(labels)
+    plt.figure(figsize=(5,5), dpi=500)
 
-    for i in range((num_points + batch_size - 1) // batch_size):  # Proper range over batches
-        start = i * batch_size
-        end = min((i + 1) * batch_size, num_points)
+    for cls_id in range(len(class_names)):
+        mask = labels == cls_id
+        if np.any(mask):
+            plt.scatter(
+                embedded[mask, 0], embedded[mask, 1],
+                s=5, alpha=0.7, color=palette[cls_id] / 255.0
+            )
 
-        batch_label = labels[start:end]
-        batch_embedded = embedded[start:end]
+    plt.axis('off')
 
-        for cls_id in range(len(class_names)):
-            if cls_id >= len(class_names):
-                print(f"Warning: Class ID {cls_id} exceeds class names length {len(class_names)}")
-                continue
-            idx = batch_label == cls_id
-            if np.any(idx):
-                plt.scatter(batch_embedded[idx, 0], batch_embedded[idx, 1],
-                            s=10, color=np.array(palette[cls_id]) / 255.0)
-    for cls_id, cls_name in enumerate(class_names):
-        plt.scatter([], [], label=class_names[cls_id], s=15, alpha=0.7, color=np.array(palette[cls_id]) / 255.0)
-
-    plt.legend(markerscale=4, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='medium')
-    plt.title("Feature Embeddings with t-SNE")
-    plt.tight_layout()
-
+    # Save or show
     if out_path:
-        plt.savefig(out_path)
-        print(f"Saved t-SNE figure to {out_path}")
+        out = f"{out_path.split('.png')[0]}_{seed}.png"
+        plt.savefig(out, dpi=1000, bbox_inches='tight')
+        print(f"Saved t-SNE figure to {out}")
     else:
         plt.show()
+    plt.close() 
 
 
-def tsne_visualize_2domains(all_feats, all_labels, palette, class_index, class_names, out_path=None):
 
-    # feats_1 = np.concatenate(all_feats[0], axis=0)
-    # labels_1 = np.concatenate(all_labels[0], axis=0)
-    # feats_2 = np.concatenate(all_feats[1], axis=0)
-    # labels_2 = np.concatenate(all_labels[1], axis=0)
-    # print(f"Domain 1 - Total feature points: {feats_1.shape[0]}, Total labels: {labels_1.shape[0]}")
-    # print(f"Domain 2 - Total feature points: {feats_2.shape[0]}, Total labels: {labels_2.shape[0]}")    
+def tsne_visualize_2domains(
+    all_feats, all_labels, class_id, domain_names, out_path=None, max_samples=300, seed=42
+):
 
     sampled_feats = []
     sampled_labels = []
@@ -163,11 +203,12 @@ def tsne_visualize_2domains(all_feats, all_labels, palette, class_index, class_n
     for feats, labels in zip(all_feats, all_labels):
         feats = np.concatenate(feats, axis=0)
         labels = np.concatenate(labels, axis=0)
-        for cls_id in class_index:
+        print(f"Total feature points: {feats.shape[0]}, Total labels: {labels.shape[0]}")
+        for cls_id in class_id:
             cls_mask = (labels == cls_id)
             indices = np.where(cls_mask)[0]
-            if len(indices) > 10000:
-                sampled_idx = np.random.choice(indices, size=10000, replace=False)
+            if len(indices) > max_samples:
+                sampled_idx = np.random.choice(indices, size=max_samples, replace=False)
             else:
                 sampled_idx = indices
             sampled_feats.append(feats[sampled_idx])
@@ -178,56 +219,46 @@ def tsne_visualize_2domains(all_feats, all_labels, palette, class_index, class_n
     feats = np.concatenate(sampled_feats, axis=0)
     labels = np.concatenate(sampled_labels, axis=0)
 
-    print("Running TSNE on {} feature points...".format(feats.shape[0]))
+
+    print(f"Running t-SNE on {feats.shape[0]} feature points with seed {seed}...")
     time_start = time.time()
-    tsne = TSNE(n_jobs=30, n_iter=500, perplexity=30, random_state=42)
+    tsne = TSNE(n_jobs=30, n_iter=500, perplexity=30, random_state=seed)
     embedded = tsne.fit_transform(feats)
     print(f"t-SNE completed in {time.time() - time_start:.2f} seconds")
-    indices = np.arange(len(embedded))
+
+    # Shuffle to avoid plotting sequence artifacts
+    indices = np.arange(len(feats))
     np.random.shuffle(indices)
-    
     embedded = embedded[indices]
     labels = labels[indices]
 
     # Visualization
-    palette = [[0, 150, 0], [255, 200, 150]]  # Ensure background color is black
+    palette = [[0, 150, 0], [255, 200, 150]]
     print(f"Palette: {palette}")
     palette = np.array(palette)
     print(f"Labels corresponding to classes: {np.unique(labels)}")
-    print(f"Class names: {class_names}")
-    plt.figure(figsize=(10, 10))
-    # pro_bar = mmcv.ProgressBar(len(class_names))
-    batch_size = 1000
-    num_points = len(labels)
+    print(f"Class names: {domain_names}")
+    
+    
+    plt.figure(figsize=(3, 3), dpi=500)
+    for cls_id in range(len(domain_names)):
+        mask = labels == cls_id
+        if np.any(mask):
+            plt.scatter(
+                embedded[mask, 0], embedded[mask, 1],
+                s=5, alpha=0.7, color=palette[cls_id] / 255.0,
+                label=domain_names[cls_id]
+            )
 
-    for i in range((num_points + batch_size - 1) // batch_size):  # Proper range over batches
-        start = i * batch_size
-        end = min((i + 1) * batch_size, num_points)
-
-        batch_label = labels[start:end]
-        batch_embedded = embedded[start:end]
-
-        for cls_id in range(len(class_names)):
-            if cls_id >= len(class_names):
-                print(f"Warning: Class ID {cls_id} exceeds class names length {len(class_names)}")
-                continue
-            idx = batch_label == cls_id
-            if np.any(idx):
-                plt.scatter(batch_embedded[idx, 0], batch_embedded[idx, 1],
-                            s=10, color=np.array(palette[cls_id]) / 255.0)
-    for cls_id, cls_name in enumerate(class_names):
-        plt.scatter([], [], label=class_names[cls_id], s=15, alpha=0.7, color=np.array(palette[cls_id]) / 255.0)
-
-    plt.legend(markerscale=4, bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=20)
-    plt.title("Feature Embeddings with t-SNE", fontsize=24)
-    plt.tight_layout()
+    plt.axis('off')
 
     if out_path:
-        plt.savefig(out_path, dpi=300, bbox_inches='tight')
-        print(f"Saved t-SNE figure to {out_path}")
+        out = f"{out_path.split('.png')[0]}_{seed}.png"
+        plt.savefig(out, dpi=1000, bbox_inches='tight')
+        print(f"Saved t-SNE figure to {out}")
     else:
         plt.show()
-
+    plt.close() 
 def parse_args():
     parser = argparse.ArgumentParser(description='MMSegmentation t-SNE Feature Visualization')
     parser.add_argument('config', help='config file path')
@@ -253,8 +284,10 @@ def main():
     # cfg.model.type = 'EncoderDecoderForSupervised'
     # print(f"Val dataset config: {cfg.data.val}")
     model = build_segmentor(cfg.model, test_cfg=cfg.get('test_cfg'))
+    # convert_checkpoint(args.checkpoint)
     wrap_fp16_model(model)
     checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
+    
     if 'CLASSES' in checkpoint.get('meta', {}):
         model.CLASSES = checkpoint['meta']['CLASSES']
     else:
@@ -270,44 +303,84 @@ def main():
     model.eval()
     
     
+    CLASSES = ('background', 'building', 'road', 'water', 'barren', 'forest',
+               'agricultural')
+
+    PALETTE = [[255, 255, 255], [255, 0, 0], [255, 255, 0], [0, 0, 255],
+               [159, 129, 183], [0, 255, 0], [255, 195, 128]]
 
     
     feats_all = []
     gts_all = []
-    for domain in ['Rural', 'Urban']:
-        cfg = update_legacy_cfg(cfg)
+    if os.path.exists(os.path.join(args.show_dir, f'feats_urban.npy')):
+        feats_rural = np.load(os.path.join(args.show_dir, f'feats_rural.npy'))
+        gts_rural = np.load(os.path.join(args.show_dir, f'gts_rural.npy'))
+        feats_urban = np.load(os.path.join(args.show_dir, f'feats_urban.npy'))
+        gts_urban = np.load(os.path.join(args.show_dir, f'gts_urban.npy'))
+        print(feats_rural.shape, feats_urban.shape)
+        feats_all.append(feats_urban)
+        gts_all.append(gts_urban)
+        feats_all.append(feats_rural)
+        gts_all.append(gts_rural)
+    else:
+        for domain in ['Rural', 'Urban']:
+            cfg = update_legacy_cfg(cfg)
 
-        cfg.data.val.data_root = f'/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/Val/{domain}'
-        cfg.data.val.test_mode = False
-        cfg.data.val.img_dir = 'images_png'
-        cfg.data.val.ann_dir = 'masks_png'
-        dataset = build_dataset(cfg.data.val, dict(test_mode=True))
-        # print(f"Dataset: {dataset}")
-        dataloader = build_dataloader(
-            dataset,
-            samples_per_gpu=1,
-            workers_per_gpu=4,
-            shuffle=False)
-        if domain == 'Rural':
-            feats_rural, gts_rural = single_gpu_infer_features(model, dataloader, args)
-            feats_all.append(feats_rural)
-            gts_all.append(gts_rural)
-            out_path = os.path.join(args.show_dir, f'tsne_plot_{domain}.png')
-            extract_and_tsne_visualize(feats_rural, gts_rural, dataset.PALETTE, dataset.CLASSES, out_path)
-    
-        elif domain == 'Urban':
-            feats_urban, gts_urban = single_gpu_infer_features(model, dataloader, args)
-            feats_all.append(feats_urban)
-            gts_all.append(gts_urban)
-            out_path = os.path.join(args.show_dir, f'tsne_plot_{domain}.png')
-            extract_and_tsne_visualize(feats_urban, gts_urban, dataset.PALETTE, dataset.CLASSES, out_path)
-    
-    
-    for i in range(7):    
-        out_path = os.path.join(args.show_dir, f'{dataset.CLASSES[i]}_tsne_plot_2domains.png')
-        tsne_visualize_2domains(feats_all, gts_all, dataset.PALETTE, [ i], ['Rural', 'Urban'], out_path)
-    
+            cfg.data.val.data_root = f'/home/Hung_Data/HungData/mmseg_data/Datasets/LoveDA/loveDA/Val/{domain}'
+            cfg.data.val.test_mode = False
+            cfg.data.val.img_dir = 'images_png'
+            cfg.data.val.ann_dir = 'masks_png'
+            dataset = build_dataset(cfg.data.val, dict(test_mode=True))
+            # print(f"Dataset: {dataset}")
+            dataloader = build_dataloader(
+                dataset,
+                samples_per_gpu=1,
+                workers_per_gpu=4,
+                shuffle=False)
+            if domain == 'Rural':
+                feats_rural, gts_rural = single_gpu_infer_features(model, dataloader, args)
+                np.save(os.path.join(args.show_dir, f'feats_rural.npy'), feats_rural)
+                np.save(os.path.join(args.show_dir, f'gts_rural.npy'), gts_rural)
+                feats_all.append(feats_rural)
+                gts_all.append(gts_rural)
 
+            elif domain == 'Urban':
+                feats_urban, gts_urban = single_gpu_infer_features(model, dataloader, args)
+                np.save(os.path.join(args.show_dir, f'feats_urban.npy'), feats_urban)
+                np.save(os.path.join(args.show_dir, f'gts_urban.npy'), gts_urban)
+                feats_all.append(feats_urban)
+                gts_all.append(gts_urban)
+        
+    out_path = os.path.join(args.show_dir, f'tsne_plot_Urban.png')
+    for i in range(3):
+        extract_and_tsne_visualize(feats_urban, gts_urban, PALETTE, CLASSES, out_path, seed=i, max_samples=500)
+    out_path = os.path.join(args.show_dir, f'tsne_plot_Rural.png')
+    for i in range(3):
+        extract_and_tsne_visualize(feats_rural, gts_rural, PALETTE, CLASSES, out_path, seed=i, max_samples=500)
+
+    
+    for i in range(7):   
+        for j in range(3): 
+            out_path = os.path.join(args.show_dir, f'{CLASSES[i]}_tsne_plot_2domains.png')
+            tsne_visualize_2domains(feats_all, gts_all, [i], ['Rural', 'Urban'], out_path, max_samples=500, seed=j)
+    threshold = 0.05
+    def count_ge_threshold(array, threshold):
+        return np.count_nonzero(np.abs(array) >= threshold)
+
+    feats_rural = np.concatenate(feats_rural, axis=0)
+    feats_urban = np.concatenate(feats_urban, axis=0)
+    feats_all = np.concatenate(feats_all, axis=0)
+    rural_sparsity = 1 - count_ge_threshold(feats_rural, threshold) / feats_rural.size
+    urban_sparsity = 1 - count_ge_threshold(feats_urban, threshold) / feats_urban.size
+    print(f"Rural sparsity: {rural_sparsity}, Urban sparsity: {urban_sparsity}")
+    feats_all = np.concatenate(feats_all, axis=0)
+    sparsity = 1 -count_ge_threshold(feats_all, threshold) / feats_all.size
+    print(f"Total sparsity: {sparsity}")
+    # save the sparsity score to a file
+    with open(os.path.join(args.show_dir, 'sparsity_score.txt'), 'w') as f:
+        f.write(f"Rural sparsity: {rural_sparsity}\n")
+        f.write(f"Urban sparsity: {urban_sparsity}\n")
+        f.write(f"Total sparsity: {sparsity}\n")
 
 
 
