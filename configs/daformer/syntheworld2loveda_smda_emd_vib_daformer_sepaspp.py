@@ -4,7 +4,7 @@ _base_ = [
     # DAFormer Network Architecture
     '../_base_/models/daformer_sepaspp_vib_mitb5.py',
     # GTA->Cityscapes Data Loading
-    '../_base_/datasets/ssda_syntheworld_Xloveda_to_loveda_512x512.py',
+    '../_base_/datasets/smda_syntheworld_Xloveda_to_loveda_512x512.py',
     # Basic UDA Self-Training
     '../_base_/uda/smda_emd.py',
     # AdamW Optimizer

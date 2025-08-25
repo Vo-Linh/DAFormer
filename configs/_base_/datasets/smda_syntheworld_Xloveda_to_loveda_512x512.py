@@ -79,7 +79,7 @@ data = dict(
     train=dict(
         type='SMDADataset',
         source=train_source_dataset,
-        target_unlabeled=train_tartget_dataset,
+        target=train_tartget_dataset,
     ),
     val=dict(
         type='LoveDADataset',
