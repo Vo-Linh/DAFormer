@@ -23,7 +23,7 @@ from .smdacs import SMDACS
 
 @UDA.register_module()
 class TrustAwareSMDACS(SMDACS):
-    def __init__(self, trust_update_interval=100, **cfg):
+    def __init__(self, trust_update_interval=100, coefficient=1, **cfg):
         super(TrustAwareSMDACS, self).__init__(**cfg)
         # mode_debug= Fasle
         self.trust_score = None
@@ -35,7 +35,7 @@ class TrustAwareSMDACS(SMDACS):
         self.accumulated_mask = None      # Sum of masks (count) for each class
         self.last_trust_update_iter = 0   # Track when trust was last updated
         
-        # self.coefficent = coeffient # Coefficient for trust weight adjustment
+        self.coefficient = coefficient # Coefficient for trust weight adjustment
         
         # Initialize tracking variables
         self.tracking_metrics = {
@@ -387,7 +387,7 @@ class TrustAwareSMDACS(SMDACS):
                 pseudo_weight[i] = torch.ones_like(
                     pseudo_weight[i], device=device)
                 pseudo_label[i] = target_gt_semantic_seg[i].squeeze(0)
-                self.debug_gt += 1
+                # self.debug_gt += 1
 
         gt_pixel_weight = torch.ones_like(pseudo_weight, device=device)
 
@@ -410,8 +410,8 @@ class TrustAwareSMDACS(SMDACS):
         trust_weight = self.compute_trust_weight(
             pseudo_label_keep, self.trust_score)
         
-        # pseudo_weight = pseudo_weight * (trust_weight ** self.coefficent) 
-        pseudo_label = pseudo_label * trust_weight
+        pseudo_weight = pseudo_weight * (trust_weight ** self.coefficient) 
+        # pseudo_weight = pseudo_weight * trust_weight
 
 
         # Track metrics here - after all weights are computed
@@ -422,24 +422,26 @@ class TrustAwareSMDACS(SMDACS):
         mix_masks = get_class_masks(gt_semantic_seg)
         if self.local_iter % self.debug_img_interval == 0:
             before_update_pseudo_weight = pseudo_weight.clone()
-       
-        # Apply mixing
-        mixed_img, mixed_lbl = [None] * batch_size, [None] * batch_size
-        mix_masks = get_class_masks(gt_semantic_seg)
-
+            
         for i in range(batch_size):
             strong_parameters['mix'] = mix_masks[i]
-            mixed_img[i], mixed_lbl[i] = strong_transform(
+
+            # Mix source and target images/labels
+            img_i, lbl_i = strong_transform(
                 strong_parameters,
                 data=torch.stack((img[i], target_img[i])),
-                target=torch.stack((gt_semantic_seg[i][0], pseudo_label[i])))
+                target=torch.stack((gt_semantic_seg[i][0], pseudo_label[i]))
+            )
+            mixed_img.append(img_i)
+            mixed_lbl.append(lbl_i)
+
             _, pseudo_weight[i] = strong_transform(
                 strong_parameters,
                 target=torch.stack((gt_pixel_weight[i], pseudo_weight[i])))
-            # pseudo_weight[i] = torch.ones((pseudo_weight[i].shape), device=dev)
+
+        # Concatenate mixed data
         mixed_img = torch.cat(mixed_img)
-        mixed_lbl = torch.cat(mixed_lbl).long()
-        
+        mixed_lbl = torch.cat(mixed_lbl)
 
         # Train on mixed images
         mix_losses = self.get_model().forward_train(

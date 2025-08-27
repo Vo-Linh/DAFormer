@@ -3,7 +3,7 @@ _base_ = [
     '../_base_/default_runtime.py',
     # DAFormer Network Architecture
     '../_base_/models/daformer_sepaspp_vib_mitb5.py',
-    '../_base_/datasets/smda_R2U_10percent_512x512.py',
+    '../_base_/datasets/smda_syntheworld_Xloveda_to_loveda_512x512.py',
     # Basic UDA Self-Training
     '../_base_/uda/smda_base.py',
     # AdamW Optimizer
@@ -26,9 +26,8 @@ smda = dict(
     pseudo_weight_ignore_bottom=0)
 data = dict(
     train=dict(
-        # Rare Class Sampling
-        rare_class_sampling=dict(
-            min_pixels=3000, class_temp=0.05, min_crop_ratio=0.5))) 
+        
+)) 
 #
 # Optimizer Hyperparameters
 optimizer_config = None
@@ -46,8 +45,8 @@ log_interval = 2000
 checkpoint_config = dict(by_epoch=False, interval=log_interval*5, max_keep_ckpts=2)
 evaluation = dict(interval=log_interval, metric='mIoU')
 # Meta Information for Result Analysis
-name = 'DAFormer_5percent_SepASPP_VIBout_MITB5_R2U_10percent_SMDA'
-exp = 'KLTN'
+name = '5percent-DAFormer-VIB-SMDA-512x512_40k'
+exp = 'Paper-Synthe2LoveDA'
 name_dataset = 'rural2urban'
 name_architecture = 'daformer_sepaspp_vib_mitb5'
 name_encoder = 'mitb5'

@@ -75,7 +75,7 @@ train_tartget_dataset = dict(
 
 data = dict(
     samples_per_gpu=4,
-    workers_per_gpu=4,
+    workers_per_gpu=6,
     train=dict(
         type='SMDADataset',
         source=train_source_dataset,

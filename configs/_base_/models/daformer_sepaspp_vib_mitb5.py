@@ -44,12 +44,7 @@ model = dict(
                 act_cfg=dict(type='ReLU'),
                 norm_cfg=norm_cfg)
             ),
-        vib_params=dict(
-            in_channels=256,
-            loss_vib=dict(
-                type='KLLoss',
-                loss_weight=0.05,
-                reduction='mean'),),
+        vib_params=None,
         loss_decode=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0),
         ),
